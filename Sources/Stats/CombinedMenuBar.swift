@@ -404,14 +404,13 @@ final class CombinedMenuBarView: NSView {
     // MARK: - Icon
 
     private static func loadMenuBarIcon() -> NSImage {
-        let bundle = Bundle.module
-        if let url = bundle.url(forResource: "icon_16x16@2x", withExtension: "png", subdirectory: "Assets.xcassets/AppIcon.appiconset"),
+        if let url = Bundle.main.url(forResource: "menubar_icon", withExtension: "png"),
            let img = NSImage(contentsOf: url) {
             img.isTemplate = true
             img.size = NSSize(width: 16, height: 16)
             return img
         }
-        let img = NSImage(systemSymbolName: "square.grid.3x3", accessibilityDescription: "Grid")!
+        let img = NSImage(systemSymbolName: "number", accessibilityDescription: "Grid")!
         img.isTemplate = true
         return img
     }

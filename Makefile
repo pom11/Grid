@@ -15,6 +15,7 @@ build:
 	cp Sources/Info.plist $(CONTENTS)/
 	cp Resources/AppIcon.icns $(CONTENTS)/Resources/
 	cp Resources/Assets.car $(CONTENTS)/Resources/
+	cp Resources/menubar_icon.png $(CONTENTS)/Resources/
 	cp -R $(BUILD_DIR)/Grid_Grid.bundle $(CONTENTS)/Resources/
 	@# Remove raw xcassets from bundle — pre-compiled Assets.car is used instead
 	rm -rf $(CONTENTS)/Resources/Grid_Grid.bundle/Assets.xcassets

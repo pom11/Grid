@@ -1,0 +1,11 @@
+.build/
+build/
+.swiftpm/
+*.xcodeproj
+xcuserdata/
+DerivedData/
+.superpowers/
+docs/superpowers/
+scripts/
+.DS_Store
+release.sh

@@ -24,6 +24,7 @@ enum WindowCycler {
 
         guard let focused = AccessibilityEngine.getFocusedWindow() else {
             AccessibilityEngine.focusWindow(sorted[0])
+            AccessibilityEngine.warpCursor(to: sorted[0].frame)
             return
         }
 
@@ -32,7 +33,9 @@ enum WindowCycler {
         } ?? 0
 
         let nextIdx = nextIndex(current: currentIdx, count: sorted.count, direction: direction)
-        AccessibilityEngine.focusWindow(sorted[nextIdx])
-        log.debug("Cycled focus to: \(sorted[nextIdx].appName) - \(sorted[nextIdx].title)")
+        let target = sorted[nextIdx]
+        AccessibilityEngine.focusWindow(target)
+        AccessibilityEngine.warpCursor(to: target.frame)
+        log.debug("Cycled focus to: \(target.appName) - \(target.title)")
     }
 }

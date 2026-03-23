@@ -24,6 +24,26 @@ enum AccessibilityEngine {
         }
     }
 
+    /// PIDs of accessory apps that have visible windows, discovered via CGWindowList.
+    private static var accessoryPIDs: Set<pid_t> {
+        guard let windowList = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
+            return []
+        }
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        var pids = Set<pid_t>()
+        for info in windowList {
+            guard let pid = info[kCGWindowOwnerPID as String] as? pid_t,
+                  pid != ownPID,
+                  let layer = info[kCGWindowLayer as String] as? Int,
+                  layer == 0 else { continue }
+            if let app = NSRunningApplication(processIdentifier: pid),
+               app.activationPolicy == .accessory {
+                pids.insert(pid)
+            }
+        }
+        return pids
+    }
+
     static func listWindows() -> [WindowModel] {
         guard isTrusted else {
             log.warning("listWindows called but not trusted")
@@ -32,12 +52,14 @@ enum AccessibilityEngine {
 
         var result: [WindowModel] = []
         let ownPID = ProcessInfo.processInfo.processIdentifier
+        let extraPIDs = accessoryPIDs
 
         for app in NSWorkspace.shared.runningApplications {
-            guard app.activationPolicy != .prohibited else { continue }
-            guard app.processIdentifier != ownPID else { continue }
+            let pid = app.processIdentifier
+            guard pid != ownPID else { continue }
+            guard app.activationPolicy == .regular || extraPIDs.contains(pid) else { continue }
 
-            let appElement = AXUIElementCreateApplication(app.processIdentifier)
+            let appElement = AXUIElementCreateApplication(pid)
             var windowsValue: CFTypeRef?
             guard AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsValue) == .success,
                   let windows = windowsValue as? [AXUIElement] else { continue }
@@ -70,7 +92,7 @@ enum AccessibilityEngine {
                 guard let screen = ScreenHelper.screen(for: frame) else { continue }
 
                 result.append(WindowModel(
-                    pid: app.processIdentifier,
+                    pid: pid,
                     windowElement: window,
                     title: title,
                     frame: frame,
@@ -97,17 +119,15 @@ enum AccessibilityEngine {
         if AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &focusedValue) == .success {
             window = focusedValue as! AXUIElement
         } else {
-            // Fallback: check the system-wide focused element (handles accessory apps like menu bar apps)
+            // Fallback: system-wide focused element (handles accessory/menu bar apps)
             let systemWide = AXUIElementCreateSystemWide()
             var systemFocused: CFTypeRef?
             guard AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &systemFocused) == .success else { return nil }
             let element = systemFocused as! AXUIElement
-            // Walk up to the window
             var windowValue: CFTypeRef?
             if AXUIElementCopyAttributeValue(element, kAXWindowAttribute as CFString, &windowValue) == .success {
                 window = windowValue as! AXUIElement
             } else {
-                // The element itself might be the window
                 var roleValue: CFTypeRef?
                 AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleValue)
                 guard (roleValue as? String) == kAXWindowRole else { return nil }
@@ -132,7 +152,6 @@ enum AccessibilityEngine {
         let frame = CGRect(origin: position, size: size)
         guard let screen = ScreenHelper.screen(for: frame) else { return nil }
 
-        // Resolve the owning app from the window element (may differ from frontApp for accessory apps)
         var pid: pid_t = frontApp.processIdentifier
         AXUIElementGetPid(window, &pid)
         let ownerApp = NSRunningApplication(processIdentifier: pid)
@@ -165,11 +184,5 @@ enum AccessibilityEngine {
         if let app = NSRunningApplication(processIdentifier: window.pid) {
             app.activate()
         }
-    }
-
-    static func warpCursor(to frame: CGRect) {
-        let center = CGPoint(x: frame.midX, y: frame.midY)
-        CGWarpMouseCursorPosition(center)
-        CGAssociateMouseAndMouseCursorPosition(1)
     }
 }

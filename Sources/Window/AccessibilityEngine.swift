@@ -165,5 +165,12 @@ enum AccessibilityEngine {
         if let app = NSRunningApplication(processIdentifier: window.pid) {
             app.activate()
         }
+        warpCursor(to: window.frame)
+    }
+
+    private static func warpCursor(to frame: CGRect) {
+        let center = CGPoint(x: frame.midX, y: frame.midY)
+        CGWarpMouseCursorPosition(center)
+        CGAssociateMouseAndMouseCursorPosition(1)
     }
 }

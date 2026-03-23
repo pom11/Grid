@@ -57,6 +57,7 @@ Grid does all three from one menu bar icon. Define zones on a grid, assign hotke
 - **Configurable margins** — adjustable gaps between windows and screen edges
 - **Launch at login** — native macOS login item support
 - **JSON config** — all settings stored in `~/.config/grid/config.json`
+- **Presets** (planned) — save and recall full window layouts with a single hotkey
 
 ## Default Shortcuts
 
@@ -144,7 +145,7 @@ All settings are stored in `~/.config/grid/config.json`. You can edit this file 
 }
 ```
 
-Zones are stored separately in `~/.config/grid/zones.json`.
+Zones are stored separately in `~/.config/grid/zones.json`. Presets (planned) will be stored in `~/.config/grid/presets.json`.
 
 ## Project structure
 
@@ -175,6 +176,10 @@ Sources/
     Zone.swift                Zone model, grid config
     ZoneStore.swift           Zone persistence
     ZoneGridEditor.swift      Drag-to-select grid editor
+  Presets/ (planned)
+    Preset.swift              Preset model, match rules
+    PresetStore.swift          Preset persistence
+    PresetApplier.swift        Apply preset layouts to windows
   SMC/
     smc.c                     SMC sensor access (C)
 ```

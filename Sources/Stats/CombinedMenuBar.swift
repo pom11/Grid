@@ -31,7 +31,7 @@ enum MenuBarStyle: String, CaseIterable, Hashable, Codable {
 final class CombinedMenuBarView: NSView {
     private var cancellable: AnyCancellable?
     private let engine: StatsEngine
-    private let icon: NSImage
+    private var iconView: NSImageView?
     var onSizeChanged: ((CGFloat) -> Void)?
 
     private static let barHeight: CGFloat = 22
@@ -80,8 +80,13 @@ final class CombinedMenuBarView: NSView {
 
     init(engine: StatsEngine) {
         self.engine = engine
-        self.icon = Self.loadMenuBarIcon()
         super.init(frame: .zero)
+
+        let iv = NSImageView()
+        iv.image = Self.loadMenuBarIcon()
+        iv.imageScaling = .scaleProportionallyDown
+        addSubview(iv)
+        iconView = iv
 
         updateFonts()
 
@@ -186,7 +191,9 @@ final class CombinedMenuBarView: NSView {
         let items = engine.showStats ? collectItems() : []
         var x = computeWidth(items)
 
-        // Icon
+        // Position icon
+        let iconY = (Self.barHeight - Self.iconSize) / 2
+        iconView?.frame = NSRect(x: x, y: iconY, width: Self.iconSize, height: Self.iconSize)
         x += Self.iconSize + 2
 
         let newSize = NSSize(width: x, height: Self.barHeight)
@@ -228,10 +235,7 @@ final class CombinedMenuBarView: NSView {
             }
         }
 
-        // Icon
-        let iconY = (Self.barHeight - Self.iconSize) / 2
-        let iconRect = NSRect(x: x, y: iconY, width: Self.iconSize, height: Self.iconSize)
-        icon.draw(in: iconRect)
+        // Icon is drawn by its NSImageView (handles template tinting)
     }
 
     // MARK: - Value template for fixed-width alignment

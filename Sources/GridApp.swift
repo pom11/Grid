@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let zoneStore = ZoneStore.shared
     private var settingsWindow: NSWindow?
     private var menuBarView: CombinedMenuBarView?
+    private var cachedGridConfig: GridConfig?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         log.info("Grid launching")
@@ -159,7 +160,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     var gridConfig: GridConfig {
-        AppConfig.load().grid
+        if let cached = cachedGridConfig { return cached }
+        let config = AppConfig.load().grid
+        cachedGridConfig = config
+        return config
+    }
+
+    func invalidateGridConfig() {
+        cachedGridConfig = nil
     }
 
     // MARK: - Settings Window
@@ -176,7 +184,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let view = SettingsView(
                 engine: statsEngine,
                 store: zoneStore,
-                onZonesChanged: { [weak self] in self?.registerZoneHotKeys() },
+                onZonesChanged: { [weak self] in
+                    self?.invalidateGridConfig()
+                    self?.registerZoneHotKeys()
+                },
                 onHotkeysChanged: { [weak self] in self?.setupHotKeys() }
             )
 

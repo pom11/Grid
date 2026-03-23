@@ -7,6 +7,7 @@ class CPUReader: ObservableObject {
     @Published var usage: Double = 0.0
 
     private let logger = Logger(subsystem: "ro.pom.grid", category: "cpu")
+    private let hostPort = mach_host_self()
     private var lastCPUInfo: (user: UInt64, system: UInt64, idle: UInt64, nice: UInt64)?
 
     func read() {
@@ -16,7 +17,7 @@ class CPUReader: ObservableObject {
         var numCPUsU: UInt32 = 0
 
         let result = host_processor_info(
-            mach_host_self(),
+            hostPort,
             PROCESSOR_CPU_LOAD_INFO,
             &numCPUsU,
             &cpuInfo,

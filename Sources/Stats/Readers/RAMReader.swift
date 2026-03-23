@@ -10,6 +10,7 @@ class RAMReader: ObservableObject {
     let total: UInt64
 
     private let logger = Logger(subsystem: "ro.pom.grid", category: "ram")
+    private let hostPort = mach_host_self()
 
     init() {
         total = ProcessInfo.processInfo.physicalMemory
@@ -22,7 +23,7 @@ class RAMReader: ObservableObject {
         let result = withUnsafeMutablePointer(to: &stats) {
             $0.withMemoryRebound(to: integer_t.self, capacity: Int(size)) {
                 host_statistics64(
-                    mach_host_self(),
+                    hostPort,
                     HOST_VM_INFO64,
                     $0,
                     &size

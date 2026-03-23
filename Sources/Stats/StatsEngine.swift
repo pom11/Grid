@@ -46,6 +46,7 @@ final class StatsEngine: ObservableObject {
     private var timer: Timer?
     private var cancellables = Set<AnyCancellable>()
     private var isLoading = true
+    private var tickCount: UInt = 0
 
     private init() {
         let config = AppConfig.load()
@@ -105,9 +106,15 @@ final class StatsEngine: ObservableObject {
         cpu.read()
         gpu.read()
         ram.read()
-        disk.read()
         sensors.read()
         network.read()
+
+        // Disk stats change slowly — read every ~30s instead of every tick
+        let diskInterval = max(1, UInt(30.0 / refreshInterval))
+        if tickCount % diskInterval == 0 {
+            disk.read()
+        }
+        tickCount &+= 1
 
         cpuHistory.append(cpu.usage)
         if cpuHistory.count > maxHistory { cpuHistory.removeFirst() }

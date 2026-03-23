@@ -41,6 +41,36 @@ final class CombinedMenuBarView: NSView {
     private var smallFont: NSFont { .monospacedSystemFont(ofSize: engine.fontSize, weight: .medium) }
     private var valueFont: NSFont { .monospacedSystemFont(ofSize: engine.fontSize + 1, weight: .medium) }
 
+    // View reuse: per-item view references
+    private struct ItemViews {
+        var label: NSTextField?
+        var value: NSTextField?
+        var sparkline: SparklineView?
+        var dotGrid: DotGridView?
+        var temp: NSTextField?
+        var separator: NSView?
+        // Two-row style
+        var topRow: NSTextField?
+        var botRow: NSTextField?
+    }
+    private var itemViewSlots: [ItemViews] = []
+
+    // Layout fingerprint to detect when full rebuild is needed
+    private struct LayoutKey: Equatable {
+        let style: MenuBarStyle
+        let showStats: Bool
+        let showCPU: Bool
+        let showGPU: Bool
+        let showRAM: Bool
+        let showDisk: Bool
+        let showNetwork: Bool
+        let showSensors: Bool
+        let sensorsAvailable: Bool
+        let fontSize: CGFloat
+        let gpuAvailable: Bool
+    }
+    private var lastLayoutKey: LayoutKey?
+
     init(engine: StatsEngine) {
         self.engine = engine
         super.init(frame: .zero)
@@ -144,22 +174,96 @@ final class CombinedMenuBarView: NSView {
 
     // MARK: - Update
 
+    private func currentLayoutKey() -> LayoutKey {
+        LayoutKey(
+            style: engine.menuBarStyle,
+            showStats: engine.showStats,
+            showCPU: engine.showCPU,
+            showGPU: engine.showGPU,
+            showRAM: engine.showRAM,
+            showDisk: engine.showDisk,
+            showNetwork: engine.showNetwork,
+            showSensors: engine.showSensors,
+            sensorsAvailable: engine.sensors.isAvailable,
+            fontSize: engine.fontSize,
+            gpuAvailable: engine.gpu.isAvailable
+        )
+    }
+
     private func update() {
+        let key = currentLayoutKey()
+        let items = engine.showStats ? collectItems() : []
+
+        if key == lastLayoutKey, items.count == itemViewSlots.count {
+            updateInPlace(items)
+        } else {
+            rebuild(items)
+            lastLayoutKey = key
+        }
+    }
+
+    /// Fast path: update text, colors, and sparkline data without recreating views
+    private func updateInPlace(_ items: [Item]) {
+        for (i, item) in items.enumerated() {
+            guard i < itemViewSlots.count else { break }
+            let slot = itemViewSlots[i]
+
+            // Update value text field
+            if let vf = slot.value {
+                vf.stringValue = item.value
+                vf.textColor = item.color
+            }
+
+            // Update sparkline
+            if let spark = slot.sparkline, let h = item.history {
+                spark.updateData(h, color: item.color)
+            }
+
+            // Update dot grid
+            if let dg = slot.dotGrid {
+                let filled = Int(round(item.pct * 16))
+                dg.updateData(filled, color: item.color)
+            }
+
+            // Update temp
+            if let tf = slot.temp {
+                if let t = item.temp, let tc = item.tempColor {
+                    tf.stringValue = t
+                    tf.textColor = tc
+                    tf.isHidden = false
+                } else {
+                    tf.isHidden = true
+                }
+            }
+
+            // Two-row style fields
+            if let topField = slot.topRow {
+                topField.stringValue = item.topRow
+            }
+            if let botField = slot.botRow {
+                var botText = item.botRow
+                if let t = item.temp { botText += " \(t)" }
+                botField.stringValue = botText
+                botField.textColor = item.color
+            }
+        }
+    }
+
+    /// Full rebuild: tear down and recreate all views
+    private func rebuild(_ items: [Item]) {
         statViews.forEach { $0.removeFromSuperview() }
         statViews.removeAll()
+        itemViewSlots.removeAll()
 
         var x: CGFloat = 2
 
-        if engine.showStats {
-            let items = collectItems()
-            if !items.isEmpty {
-                switch engine.menuBarStyle {
-                case .sparklines:    x = layoutA(items, x: x)
-                case .cleanNumbers:  x = layoutB(items, x: x)
-                case .dotMatrix:     x = layoutC(items, x: x)
-                case .minimal:       x = layoutD(items, x: x)
-                case .twoRow:        x = layoutE(items, x: x)
-                }
+        if !items.isEmpty {
+            switch engine.menuBarStyle {
+            case .sparklines:    x = layoutA(items, x: x)
+            case .cleanNumbers:  x = layoutB(items, x: x)
+            case .dotMatrix:     x = layoutC(items, x: x)
+            case .minimal:       x = layoutD(items, x: x)
+            case .twoRow:        x = layoutE(items, x: x)
             }
         }
 
@@ -194,12 +298,14 @@ final class CombinedMenuBarView: NSView {
 
     // MARK: - Temp suffix helper
 
-    /// Place temp value after the main value if present
-    private func placeTemp(_ item: Item, font: NSFont, x: inout CGFloat) {
+    /// Place temp value after the main value if present, storing in slot
+    private func placeTemp(_ item: Item, font: NSFont, x: inout CGFloat, slot: inout ItemViews) {
         guard let t = item.temp, let tc = item.tempColor else { return }
         x += 2
-        x += placeLabel(t, font: font, color: tc, at: x,
+        let tf = placeLabel(t, font: font, color: tc, at: x,
                         minTemplate: Self.tempTemplate, align: .right)
+        slot.temp = tf.field
+        x += tf.width
     }
 
     // MARK: - Style A: Sparklines + Heat Colors
@@ -207,16 +313,22 @@ final class CombinedMenuBarView: NSView {
     private func layoutA(_ items: [Item], x startX: CGFloat) -> CGFloat {
         var x = startX
         for (i, item) in items.enumerated() {
-            x += placeLabel(item.label, font: labelFont, color: .secondaryLabelColor, at: x)
+            var slot = ItemViews()
+            x += placeLabel(item.label, font: labelFont, color: .secondaryLabelColor, at: x).width
             x += 3
             if let h = item.history, !h.isEmpty {
-                x += placeSparkline(h, color: item.color, height: 12, at: x)
+                let spark = placeSparkline(h, color: item.color, height: 12, at: x)
+                slot.sparkline = spark.view
+                x += spark.width
                 x += 3
             }
-            x += placeLabel(item.value, font: smallFont, color: item.color, at: x,
+            let vf = placeLabel(item.value, font: smallFont, color: item.color, at: x,
                             minTemplate: valueTemplate(for: item), align: .right)
-            placeTemp(item, font: smallFont, x: &x)
+            slot.value = vf.field
+            x += vf.width
+            placeTemp(item, font: smallFont, x: &x, slot: &slot)
             if i < items.count - 1 { x += placeSep(at: x) } else { x += 6 }
+            itemViewSlots.append(slot)
         }
         return x
     }
@@ -226,12 +338,16 @@ final class CombinedMenuBarView: NSView {
     private func layoutB(_ items: [Item], x startX: CGFloat) -> CGFloat {
         var x = startX
         for (i, item) in items.enumerated() {
-            x += placeLabel(item.label, font: labelFont, color: .secondaryLabelColor, at: x)
+            var slot = ItemViews()
+            x += placeLabel(item.label, font: labelFont, color: .secondaryLabelColor, at: x).width
             x += 3
-            x += placeLabel(item.value, font: valueFont, color: item.color, at: x,
+            let vf = placeLabel(item.value, font: valueFont, color: item.color, at: x,
                             minTemplate: valueTemplate(for: item), align: .right)
-            placeTemp(item, font: valueFont, x: &x)
+            slot.value = vf.field
+            x += vf.width
+            placeTemp(item, font: valueFont, x: &x, slot: &slot)
             if i < items.count - 1 { x += placeSep(at: x) } else { x += 6 }
+            itemViewSlots.append(slot)
         }
         return x
     }
@@ -241,17 +357,23 @@ final class CombinedMenuBarView: NSView {
     private func layoutC(_ items: [Item], x startX: CGFloat) -> CGFloat {
         var x = startX
         for (i, item) in items.enumerated() {
+            var slot = ItemViews()
             if item.pct >= 0 {
-                x += placeLabel(item.label, font: labelFont, color: .secondaryLabelColor, at: x)
+                x += placeLabel(item.label, font: labelFont, color: .secondaryLabelColor, at: x).width
                 x += 3
                 let filled = Int(round(item.pct * 16))
-                x += placeDotGrid(filled, color: item.color, at: x)
-                placeTemp(item, font: labelFont, x: &x)
+                let dg = placeDotGrid(filled, color: item.color, at: x)
+                slot.dotGrid = dg.view
+                x += dg.width
+                placeTemp(item, font: labelFont, x: &x, slot: &slot)
             } else {
-                x += placeLabel(item.value, font: smallFont, color: item.color, at: x,
+                let vf = placeLabel(item.value, font: smallFont, color: item.color, at: x,
                                 minTemplate: valueTemplate(for: item), align: .right)
+                slot.value = vf.field
+                x += vf.width
             }
             if i < items.count - 1 { x += placeSep(at: x) } else { x += 6 }
+            itemViewSlots.append(slot)
         }
         return x
     }
@@ -261,14 +383,20 @@ final class CombinedMenuBarView: NSView {
     private func layoutD(_ items: [Item], x startX: CGFloat) -> CGFloat {
         var x = startX
         for (i, item) in items.enumerated() {
+            var slot = ItemViews()
             if let h = item.history, !h.isEmpty {
-                x += placeSparkline(h, color: item.color, height: 16, at: x)
+                let spark = placeSparkline(h, color: item.color, height: 16, at: x)
+                slot.sparkline = spark.view
+                x += spark.width
                 x += 2
             }
-            x += placeLabel(item.value, font: smallFont, color: item.color, at: x,
+            let vf = placeLabel(item.value, font: smallFont, color: item.color, at: x,
                             minTemplate: valueTemplate(for: item), align: .right)
-            placeTemp(item, font: smallFont, x: &x)
+            slot.value = vf.field
+            x += vf.width
+            placeTemp(item, font: smallFont, x: &x, slot: &slot)
             if i < items.count - 1 { x += placeSep(at: x) } else { x += 6 }
+            itemViewSlots.append(slot)
         }
         return x
     }
@@ -279,8 +407,11 @@ final class CombinedMenuBarView: NSView {
         let half = Self.barHeight / 2
         var x = startX
         for (i, item) in items.enumerated() {
+            var slot = ItemViews()
             if let h = item.history, !h.isEmpty {
-                x += placeSparkline(h, color: item.color, height: 16, at: x)
+                let spark = placeSparkline(h, color: item.color, height: 16, at: x)
+                slot.sparkline = spark.view
+                x += spark.width
                 x += 3
             }
             let topTpl = rowTemplate(for: item, top: true)
@@ -301,12 +432,15 @@ final class CombinedMenuBarView: NSView {
             if let t = item.temp { botText += " \(t)" }
             let botTplFinal = item.temp != nil ? nil : botTpl
 
-            let topW = placeLabel(item.topRow, font: topLabelFont, color: .secondaryLabelColor, at: x,
+            let topResult = placeLabel(item.topRow, font: topLabelFont, color: .secondaryLabelColor, at: x,
                                   explicitY: topY, minTemplate: topTpl, align: .right)
-            let botW = placeLabel(botText, font: botLabelFont, color: item.color, at: x,
+            slot.topRow = topResult.field
+            let botResult = placeLabel(botText, font: botLabelFont, color: item.color, at: x,
                                   explicitY: botY, minTemplate: botTplFinal, align: .right)
-            x += max(topW, botW)
+            slot.botRow = botResult.field
+            x += max(topResult.width, botResult.width)
             if i < items.count - 1 { x += placeSep(at: x) } else { x += 6 }
+            itemViewSlots.append(slot)
         }
         return x
     }
@@ -314,6 +448,7 @@ final class CombinedMenuBarView: NSView {
     // MARK: - Placement Helpers
 
     private static var _widthCache: [String: CGFloat] = [:]
+    private static var _heightCache: [CGFloat: CGFloat] = [:]
 
     private static func minWidth(for template: String, font: NSFont) -> CGFloat {
         let key = "\(template)|\(font.pointSize)"
@@ -326,16 +461,25 @@ final class CombinedMenuBarView: NSView {
     }
 
     private func heightOf(_ font: NSFont) -> CGFloat {
+        let size = font.pointSize
+        if let h = Self._heightCache[size] { return h }
         let tf = NSTextField(labelWithString: "X")
         tf.font = font
-        return ceil(tf.intrinsicContentSize.height)
+        let h = ceil(tf.intrinsicContentSize.height)
+        Self._heightCache[size] = h
+        return h
+    }
+
+    private struct PlacedLabel {
+        let field: NSTextField
+        let width: CGFloat
     }
 
     /// Place a label, vertically centered by default. Pass `explicitY` to override.
     @discardableResult
     private func placeLabel(_ text: String, font: NSFont, color: NSColor, at x: CGFloat,
                             explicitY: CGFloat? = nil,
-                            minTemplate: String? = nil, align: NSTextAlignment = .left) -> CGFloat {
+                            minTemplate: String? = nil, align: NSTextAlignment = .left) -> PlacedLabel {
         let tf = NSTextField(labelWithString: text)
         tf.font = font
         tf.textColor = color
@@ -353,27 +497,37 @@ final class CombinedMenuBarView: NSView {
         tf.frame = NSRect(x: x, y: y, width: w, height: h)
         addSubview(tf)
         statViews.append(tf)
-        return w
+        return PlacedLabel(field: tf, width: w)
     }
 
-    private func placeSparkline(_ values: [Double], color: NSColor, height: CGFloat, at x: CGFloat) -> CGFloat {
+    private struct PlacedSparkline {
+        let view: SparklineView
+        let width: CGFloat
+    }
+
+    private func placeSparkline(_ values: [Double], color: NSColor, height: CGFloat, at x: CGFloat) -> PlacedSparkline {
         let w = CGFloat(values.count) * 3 - 1
         let y = floor((Self.barHeight - height) / 2)
         let view = SparklineView(values: values, color: color)
         view.frame = NSRect(x: x, y: y, width: w, height: height)
         addSubview(view)
         statViews.append(view)
-        return w
+        return PlacedSparkline(view: view, width: w)
     }
 
-    private func placeDotGrid(_ filled: Int, color: NSColor, at x: CGFloat) -> CGFloat {
+    private struct PlacedDotGrid {
+        let view: DotGridView
+        let width: CGFloat
+    }
+
+    private func placeDotGrid(_ filled: Int, color: NSColor, at x: CGFloat) -> PlacedDotGrid {
         let size: CGFloat = 15
         let y = floor((Self.barHeight - size) / 2)
         let view = DotGridView(filled: filled, color: color)
         view.frame = NSRect(x: x, y: y, width: size, height: size)
         addSubview(view)
         statViews.append(view)
-        return size
+        return PlacedDotGrid(view: view, width: size)
     }
 
     private func placeSep(at x: CGFloat) -> CGFloat {
@@ -419,8 +573,8 @@ final class CombinedMenuBarView: NSView {
 // MARK: - Sparkline View
 
 private class SparklineView: NSView {
-    let values: [Double]
-    let barColor: NSColor
+    var values: [Double]
+    var barColor: NSColor
 
     init(values: [Double], color: NSColor) {
         self.values = values
@@ -429,6 +583,12 @@ private class SparklineView: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    func updateData(_ newValues: [Double], color: NSColor) {
+        values = newValues
+        barColor = color
+        needsDisplay = true
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         barColor.withAlphaComponent(0.6).setFill()
@@ -444,8 +604,8 @@ private class SparklineView: NSView {
 // MARK: - Dot Grid View
 
 private class DotGridView: NSView {
-    let filled: Int
-    let dotColor: NSColor
+    var filled: Int
+    var dotColor: NSColor
 
     init(filled: Int, color: NSColor) {
         self.filled = min(16, max(0, filled))
@@ -454,6 +614,12 @@ private class DotGridView: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    func updateData(_ newFilled: Int, color: NSColor) {
+        filled = min(16, max(0, newFilled))
+        dotColor = color
+        needsDisplay = true
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         for row in 0..<4 {

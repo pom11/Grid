@@ -34,7 +34,7 @@ enum AccessibilityEngine {
         let ownPID = ProcessInfo.processInfo.processIdentifier
 
         for app in NSWorkspace.shared.runningApplications {
-            guard app.activationPolicy == .regular else { continue }
+            guard app.activationPolicy != .prohibited else { continue }
             guard app.processIdentifier != ownPID else { continue }
 
             let appElement = AXUIElementCreateApplication(app.processIdentifier)
@@ -46,7 +46,7 @@ enum AccessibilityEngine {
                 var subroleValue: CFTypeRef?
                 AXUIElementCopyAttributeValue(window, kAXSubroleAttribute as CFString, &subroleValue)
                 let subrole = subroleValue as? String ?? ""
-                guard subrole == "AXStandardWindow" else { continue }
+                guard subrole == "AXStandardWindow" || subrole == "AXFloatingWindow" else { continue }
 
                 var minimizedValue: CFTypeRef?
                 AXUIElementCopyAttributeValue(window, kAXMinimizedAttribute as CFString, &minimizedValue)
@@ -93,8 +93,27 @@ enum AccessibilityEngine {
         let appElement = AXUIElementCreateApplication(frontApp.processIdentifier)
 
         var focusedValue: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &focusedValue) == .success else { return nil }
-        let window = focusedValue as! AXUIElement
+        let window: AXUIElement
+        if AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &focusedValue) == .success {
+            window = focusedValue as! AXUIElement
+        } else {
+            // Fallback: check the system-wide focused element (handles accessory apps like menu bar apps)
+            let systemWide = AXUIElementCreateSystemWide()
+            var systemFocused: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &systemFocused) == .success else { return nil }
+            let element = systemFocused as! AXUIElement
+            // Walk up to the window
+            var windowValue: CFTypeRef?
+            if AXUIElementCopyAttributeValue(element, kAXWindowAttribute as CFString, &windowValue) == .success {
+                window = windowValue as! AXUIElement
+            } else {
+                // The element itself might be the window
+                var roleValue: CFTypeRef?
+                AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleValue)
+                guard (roleValue as? String) == kAXWindowRole else { return nil }
+                window = element
+            }
+        }
 
         var positionValue: CFTypeRef?
         guard AXUIElementCopyAttributeValue(window, kAXPositionAttribute as CFString, &positionValue) == .success else { return nil }
@@ -113,13 +132,18 @@ enum AccessibilityEngine {
         let frame = CGRect(origin: position, size: size)
         guard let screen = ScreenHelper.screen(for: frame) else { return nil }
 
+        // Resolve the owning app from the window element (may differ from frontApp for accessory apps)
+        var pid: pid_t = frontApp.processIdentifier
+        AXUIElementGetPid(window, &pid)
+        let ownerApp = NSRunningApplication(processIdentifier: pid)
+
         return WindowModel(
-            pid: frontApp.processIdentifier,
+            pid: pid,
             windowElement: window,
             title: title,
             frame: frame,
             screen: screen,
-            appName: frontApp.localizedName ?? ""
+            appName: ownerApp?.localizedName ?? frontApp.localizedName ?? ""
         )
     }
 

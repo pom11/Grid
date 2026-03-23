@@ -25,67 +25,74 @@ enum MenuBarStyle: String, CaseIterable, Hashable, Codable {
 }
 
 // MARK: - Combined Menu Bar View
+// Single-view architecture: draws everything in one draw(_:) call
+// to avoid expensive NSStatusItem replicant snapshot traversal.
 
 final class CombinedMenuBarView: NSView {
-    private var statViews: [NSView] = []
-    private var iconView: NSImageView?
     private var cancellable: AnyCancellable?
     private let engine: StatsEngine
+    private let icon: NSImage
     var onSizeChanged: ((CGFloat) -> Void)?
 
     private static let barHeight: CGFloat = 22
     private static let iconSize: CGFloat = 16
 
-    // Dynamic fonts based on engine.fontSize
-    private var labelFont: NSFont { .monospacedSystemFont(ofSize: engine.fontSize - 1, weight: .semibold) }
-    private var smallFont: NSFont { .monospacedSystemFont(ofSize: engine.fontSize, weight: .medium) }
-    private var valueFont: NSFont { .monospacedSystemFont(ofSize: engine.fontSize + 1, weight: .medium) }
+    // Cached fonts and metrics
+    private var cachedFontSize: CGFloat = 0
+    private var _labelFont: NSFont = .monospacedSystemFont(ofSize: 9, weight: .semibold)
+    private var _smallFont: NSFont = .monospacedSystemFont(ofSize: 10, weight: .medium)
+    private var _valueFont: NSFont = .monospacedSystemFont(ofSize: 11, weight: .medium)
+    private var _labelAttrs: [NSAttributedString.Key: Any] = [:]
+    private var _smallAttrs: [NSAttributedString.Key: Any] = [:]
+    private var _valueAttrs: [NSAttributedString.Key: Any] = [:]
 
-    // View reuse: per-item view references
-    private struct ItemViews {
-        var label: NSTextField?
-        var value: NSTextField?
-        var sparkline: SparklineView?
-        var dotGrid: DotGridView?
-        var temp: NSTextField?
-        var separator: NSView?
-        // Two-row style
-        var topRow: NSTextField?
-        var botRow: NSTextField?
+    private func updateFonts() {
+        let size = engine.fontSize
+        guard size != cachedFontSize else { return }
+        cachedFontSize = size
+        _labelFont = .monospacedSystemFont(ofSize: size - 1, weight: .semibold)
+        _smallFont = .monospacedSystemFont(ofSize: size, weight: .medium)
+        _valueFont = .monospacedSystemFont(ofSize: size + 1, weight: .medium)
+        _labelAttrs = [.font: _labelFont]
+        _smallAttrs = [.font: _smallFont]
+        _valueAttrs = [.font: _valueFont]
     }
-    private var itemViewSlots: [ItemViews] = []
 
-    // Layout fingerprint to detect when full rebuild is needed
-    private struct LayoutKey: Equatable {
-        let style: MenuBarStyle
-        let showStats: Bool
-        let showCPU: Bool
-        let showGPU: Bool
-        let showRAM: Bool
-        let showDisk: Bool
-        let showNetwork: Bool
-        let showSensors: Bool
-        let sensorsAvailable: Bool
-        let fontSize: CGFloat
-        let gpuAvailable: Bool
+    // Width cache for fixed-width alignment templates
+    private static var _widthCache: [String: CGFloat] = [:]
+    private static var _heightCache: [CGFloat: CGFloat] = [:]
+
+    private static func minWidth(for template: String, font: NSFont) -> CGFloat {
+        let key = "\(template)|\(font.pointSize)"
+        if let w = _widthCache[key] { return w }
+        let w = ceil((template as NSString).size(withAttributes: [.font: font]).width) + 2
+        _widthCache[key] = w
+        return w
     }
-    private var lastLayoutKey: LayoutKey?
+
+    private static func heightOf(_ font: NSFont) -> CGFloat {
+        let size = font.pointSize
+        if let h = _heightCache[size] { return h }
+        let h = ceil(("X" as NSString).size(withAttributes: [.font: font]).height)
+        _heightCache[size] = h
+        return h
+    }
 
     init(engine: StatsEngine) {
         self.engine = engine
+        self.icon = Self.loadMenuBarIcon()
         super.init(frame: .zero)
 
-        let iv = NSImageView()
-        iv.image = Self.loadMenuBarIcon()
-        iv.imageScaling = .scaleProportionallyDown
-        addSubview(iv)
-        iconView = iv
+        updateFonts()
 
         cancellable = engine.objectWillChange
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.update() }
+            .sink { [weak self] _ in
+                self?.updateSize()
+                self?.needsDisplay = true
+            }
 
-        update()
+        updateSize()
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -107,7 +114,7 @@ final class CombinedMenuBarView: NSView {
         let history: [Double]?
         let color: NSColor
         let kind: StatKind
-        let temp: String?       // optional temp suffix (e.g. "42°")
+        let temp: String?
         let tempColor: NSColor?
     }
 
@@ -172,108 +179,59 @@ final class CombinedMenuBarView: NSView {
         return items
     }
 
-    // MARK: - Update
+    // MARK: - Size Calculation
 
-    private func currentLayoutKey() -> LayoutKey {
-        LayoutKey(
-            style: engine.menuBarStyle,
-            showStats: engine.showStats,
-            showCPU: engine.showCPU,
-            showGPU: engine.showGPU,
-            showRAM: engine.showRAM,
-            showDisk: engine.showDisk,
-            showNetwork: engine.showNetwork,
-            showSensors: engine.showSensors,
-            sensorsAvailable: engine.sensors.isAvailable,
-            fontSize: engine.fontSize,
-            gpuAvailable: engine.gpu.isAvailable
-        )
-    }
-
-    private func update() {
-        let key = currentLayoutKey()
+    private func updateSize() {
+        updateFonts()
         let items = engine.showStats ? collectItems() : []
+        var x = computeWidth(items)
 
-        if key == lastLayoutKey, items.count == itemViewSlots.count {
-            updateInPlace(items)
-        } else {
-            rebuild(items)
-            lastLayoutKey = key
+        // Icon
+        x += Self.iconSize + 2
+
+        let newSize = NSSize(width: x, height: Self.barHeight)
+        if frame.size != newSize {
+            frame.size = newSize
+            invalidateIntrinsicContentSize()
+            onSizeChanged?(x)
         }
     }
 
-    /// Fast path: update text, colors, and sparkline data without recreating views
-    private func updateInPlace(_ items: [Item]) {
-        for (i, item) in items.enumerated() {
-            guard i < itemViewSlots.count else { break }
-            let slot = itemViewSlots[i]
+    private func computeWidth(_ items: [Item]) -> CGFloat {
+        var x: CGFloat = 2
+        guard !items.isEmpty else { return x }
 
-            // Update value text field
-            if let vf = slot.value {
-                vf.stringValue = item.value
-                vf.textColor = item.color
-            }
-
-            // Update sparkline
-            if let spark = slot.sparkline, let h = item.history {
-                spark.updateData(h, color: item.color)
-            }
-
-            // Update dot grid
-            if let dg = slot.dotGrid {
-                let filled = Int(round(item.pct * 16))
-                dg.updateData(filled, color: item.color)
-            }
-
-            // Update temp
-            if let tf = slot.temp {
-                if let t = item.temp, let tc = item.tempColor {
-                    tf.stringValue = t
-                    tf.textColor = tc
-                    tf.isHidden = false
-                } else {
-                    tf.isHidden = true
-                }
-            }
-
-            // Two-row style fields
-            if let topField = slot.topRow {
-                topField.stringValue = item.topRow
-            }
-            if let botField = slot.botRow {
-                var botText = item.botRow
-                if let t = item.temp { botText += " \(t)" }
-                botField.stringValue = botText
-                botField.textColor = item.color
-            }
+        switch engine.menuBarStyle {
+        case .sparklines:    x = widthA(items, x: x)
+        case .cleanNumbers:  x = widthB(items, x: x)
+        case .dotMatrix:     x = widthC(items, x: x)
+        case .minimal:       x = widthD(items, x: x)
+        case .twoRow:        x = widthE(items, x: x)
         }
+        return x
     }
 
-    /// Full rebuild: tear down and recreate all views
-    private func rebuild(_ items: [Item]) {
-        statViews.forEach { $0.removeFromSuperview() }
-        statViews.removeAll()
-        itemViewSlots.removeAll()
+    // MARK: - Draw
 
+    override func draw(_ dirtyRect: NSRect) {
+        updateFonts()
+        let items = engine.showStats ? collectItems() : []
         var x: CGFloat = 2
 
         if !items.isEmpty {
             switch engine.menuBarStyle {
-            case .sparklines:    x = layoutA(items, x: x)
-            case .cleanNumbers:  x = layoutB(items, x: x)
-            case .dotMatrix:     x = layoutC(items, x: x)
-            case .minimal:       x = layoutD(items, x: x)
-            case .twoRow:        x = layoutE(items, x: x)
+            case .sparklines:    x = drawA(items, x: x)
+            case .cleanNumbers:  x = drawB(items, x: x)
+            case .dotMatrix:     x = drawC(items, x: x)
+            case .minimal:       x = drawD(items, x: x)
+            case .twoRow:        x = drawE(items, x: x)
             }
         }
 
+        // Icon
         let iconY = (Self.barHeight - Self.iconSize) / 2
-        iconView?.frame = NSRect(x: x, y: iconY, width: Self.iconSize, height: Self.iconSize)
-        x += Self.iconSize + 2
-
-        frame.size = NSSize(width: x, height: Self.barHeight)
-        invalidateIntrinsicContentSize()
-        onSizeChanged?(x)
+        let iconRect = NSRect(x: x, y: iconY, width: Self.iconSize, height: Self.iconSize)
+        icon.draw(in: iconRect)
     }
 
     // MARK: - Value template for fixed-width alignment
@@ -296,247 +254,259 @@ final class CombinedMenuBarView: NSView {
         }
     }
 
-    // MARK: - Temp suffix helper
+    // MARK: - Drawing Primitives
 
-    /// Place temp value after the main value if present, storing in slot
-    private func placeTemp(_ item: Item, font: NSFont, x: inout CGFloat, slot: inout ItemViews) {
+    @discardableResult
+    private func drawText(_ text: String, font: NSFont, color: NSColor, at x: CGFloat,
+                          explicitY: CGFloat? = nil,
+                          minTemplate: String? = nil, align: NSTextAlignment = .left) -> CGFloat {
+        let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
+        let textSize = (text as NSString).size(withAttributes: attrs)
+        var w = ceil(textSize.width) + 2
+        if let tpl = minTemplate {
+            w = max(w, Self.minWidth(for: tpl, font: font))
+        }
+        let h = ceil(textSize.height)
+        let y = explicitY ?? floor((Self.barHeight - h) / 2)
+
+        var drawX = x
+        if align == .right {
+            drawX = x + w - ceil(textSize.width) - 1
+        }
+        (text as NSString).draw(at: NSPoint(x: drawX, y: y), withAttributes: attrs)
+        return w
+    }
+
+    private func drawSparkline(_ values: [Double], color: NSColor, height: CGFloat, at x: CGFloat) -> CGFloat {
+        let w = CGFloat(values.count) * 3 - 1
+        let baseY = floor((Self.barHeight - height) / 2)
+        color.withAlphaComponent(0.6).setFill()
+        for (i, val) in values.enumerated() {
+            let h = max(1, CGFloat(val) * height)
+            let barX = x + CGFloat(i) * 3
+            let rect = NSRect(x: barX, y: baseY, width: 2, height: h)
+            NSBezierPath(roundedRect: rect, xRadius: 0.5, yRadius: 0.5).fill()
+        }
+        return w
+    }
+
+    private func drawDotGrid(_ filled: Int, color: NSColor, at x: CGFloat) -> CGFloat {
+        let size: CGFloat = 15
+        let baseY = floor((Self.barHeight - size) / 2)
+        let clamped = min(16, max(0, filled))
+        for row in 0..<4 {
+            for col in 0..<4 {
+                let idx = row * 4 + col
+                let dotX = x + CGFloat(col) * 4
+                let dotY = baseY + size - CGFloat(row + 1) * 4
+                let rect = NSRect(x: dotX, y: dotY, width: 3, height: 3)
+                if idx < clamped {
+                    color.withAlphaComponent(0.8).setFill()
+                } else {
+                    NSColor.labelColor.withAlphaComponent(0.12).setFill()
+                }
+                NSBezierPath(ovalIn: rect).fill()
+            }
+        }
+        return size
+    }
+
+    private func drawSep(at x: CGFloat) -> CGFloat {
+        NSColor.labelColor.withAlphaComponent(0.08).setFill()
+        NSRect(x: x + 4, y: 5, width: 1, height: 12).fill()
+        return 9
+    }
+
+    /// Draw temp value after the main value if present
+    private func drawTemp(_ item: Item, font: NSFont, x: inout CGFloat) {
         guard let t = item.temp, let tc = item.tempColor else { return }
         x += 2
-        let tf = placeLabel(t, font: font, color: tc, at: x,
-                        minTemplate: Self.tempTemplate, align: .right)
-        slot.temp = tf.field
-        x += tf.width
+        x += drawText(t, font: font, color: tc, at: x,
+                       minTemplate: Self.tempTemplate, align: .right)
     }
 
     // MARK: - Style A: Sparklines + Heat Colors
 
-    private func layoutA(_ items: [Item], x startX: CGFloat) -> CGFloat {
+    private func drawA(_ items: [Item], x startX: CGFloat) -> CGFloat {
         var x = startX
         for (i, item) in items.enumerated() {
-            var slot = ItemViews()
-            x += placeLabel(item.label, font: labelFont, color: .secondaryLabelColor, at: x).width
+            x += drawText(item.label, font: _labelFont, color: .secondaryLabelColor, at: x)
             x += 3
             if let h = item.history, !h.isEmpty {
-                let spark = placeSparkline(h, color: item.color, height: 12, at: x)
-                slot.sparkline = spark.view
-                x += spark.width
+                x += drawSparkline(h, color: item.color, height: 12, at: x)
                 x += 3
             }
-            let vf = placeLabel(item.value, font: smallFont, color: item.color, at: x,
-                            minTemplate: valueTemplate(for: item), align: .right)
-            slot.value = vf.field
-            x += vf.width
-            placeTemp(item, font: smallFont, x: &x, slot: &slot)
-            if i < items.count - 1 { x += placeSep(at: x) } else { x += 6 }
-            itemViewSlots.append(slot)
+            x += drawText(item.value, font: _smallFont, color: item.color, at: x,
+                           minTemplate: valueTemplate(for: item), align: .right)
+            drawTemp(item, font: _smallFont, x: &x)
+            if i < items.count - 1 { x += drawSep(at: x) } else { x += 6 }
         }
         return x
     }
 
     // MARK: - Style B: Clean Numbers + Heat Colors
 
-    private func layoutB(_ items: [Item], x startX: CGFloat) -> CGFloat {
+    private func drawB(_ items: [Item], x startX: CGFloat) -> CGFloat {
         var x = startX
         for (i, item) in items.enumerated() {
-            var slot = ItemViews()
-            x += placeLabel(item.label, font: labelFont, color: .secondaryLabelColor, at: x).width
+            x += drawText(item.label, font: _labelFont, color: .secondaryLabelColor, at: x)
             x += 3
-            let vf = placeLabel(item.value, font: valueFont, color: item.color, at: x,
-                            minTemplate: valueTemplate(for: item), align: .right)
-            slot.value = vf.field
-            x += vf.width
-            placeTemp(item, font: valueFont, x: &x, slot: &slot)
-            if i < items.count - 1 { x += placeSep(at: x) } else { x += 6 }
-            itemViewSlots.append(slot)
+            x += drawText(item.value, font: _valueFont, color: item.color, at: x,
+                           minTemplate: valueTemplate(for: item), align: .right)
+            drawTemp(item, font: _valueFont, x: &x)
+            if i < items.count - 1 { x += drawSep(at: x) } else { x += 6 }
         }
         return x
     }
 
     // MARK: - Style C: Dot Matrix
 
-    private func layoutC(_ items: [Item], x startX: CGFloat) -> CGFloat {
+    private func drawC(_ items: [Item], x startX: CGFloat) -> CGFloat {
         var x = startX
         for (i, item) in items.enumerated() {
-            var slot = ItemViews()
             if item.pct >= 0 {
-                x += placeLabel(item.label, font: labelFont, color: .secondaryLabelColor, at: x).width
+                x += drawText(item.label, font: _labelFont, color: .secondaryLabelColor, at: x)
                 x += 3
                 let filled = Int(round(item.pct * 16))
-                let dg = placeDotGrid(filled, color: item.color, at: x)
-                slot.dotGrid = dg.view
-                x += dg.width
-                placeTemp(item, font: labelFont, x: &x, slot: &slot)
+                x += drawDotGrid(filled, color: item.color, at: x)
+                drawTemp(item, font: _labelFont, x: &x)
             } else {
-                let vf = placeLabel(item.value, font: smallFont, color: item.color, at: x,
-                                minTemplate: valueTemplate(for: item), align: .right)
-                slot.value = vf.field
-                x += vf.width
+                x += drawText(item.value, font: _smallFont, color: item.color, at: x,
+                               minTemplate: valueTemplate(for: item), align: .right)
             }
-            if i < items.count - 1 { x += placeSep(at: x) } else { x += 6 }
-            itemViewSlots.append(slot)
+            if i < items.count - 1 { x += drawSep(at: x) } else { x += 6 }
         }
         return x
     }
 
     // MARK: - Style D: Minimal (Sparklines, No Labels)
 
-    private func layoutD(_ items: [Item], x startX: CGFloat) -> CGFloat {
+    private func drawD(_ items: [Item], x startX: CGFloat) -> CGFloat {
         var x = startX
         for (i, item) in items.enumerated() {
-            var slot = ItemViews()
             if let h = item.history, !h.isEmpty {
-                let spark = placeSparkline(h, color: item.color, height: 16, at: x)
-                slot.sparkline = spark.view
-                x += spark.width
+                x += drawSparkline(h, color: item.color, height: 16, at: x)
                 x += 2
             }
-            let vf = placeLabel(item.value, font: smallFont, color: item.color, at: x,
-                            minTemplate: valueTemplate(for: item), align: .right)
-            slot.value = vf.field
-            x += vf.width
-            placeTemp(item, font: smallFont, x: &x, slot: &slot)
-            if i < items.count - 1 { x += placeSep(at: x) } else { x += 6 }
-            itemViewSlots.append(slot)
+            x += drawText(item.value, font: _smallFont, color: item.color, at: x,
+                           minTemplate: valueTemplate(for: item), align: .right)
+            drawTemp(item, font: _smallFont, x: &x)
+            if i < items.count - 1 { x += drawSep(at: x) } else { x += 6 }
         }
         return x
     }
 
     // MARK: - Style E: Two-Row + Sparklines
 
-    private func layoutE(_ items: [Item], x startX: CGFloat) -> CGFloat {
+    private func drawE(_ items: [Item], x startX: CGFloat) -> CGFloat {
         let half = Self.barHeight / 2
         var x = startX
         for (i, item) in items.enumerated() {
-            var slot = ItemViews()
             if let h = item.history, !h.isEmpty {
-                let spark = placeSparkline(h, color: item.color, height: 16, at: x)
-                slot.sparkline = spark.view
-                x += spark.width
+                x += drawSparkline(h, color: item.color, height: 16, at: x)
                 x += 3
             }
             let topTpl = rowTemplate(for: item, top: true)
             let botTpl = rowTemplate(for: item, top: false)
 
-            // Top label: centered in upper half
-            let topLabelFont = labelFont
-            let topH = ceil(heightOf(topLabelFont))
+            let topH = ceil(Self.heightOf(_labelFont))
             let topY = half + floor((half - topH) / 2)
 
-            // Bottom label: centered in lower half
-            let botLabelFont = valueFont
-            let botH = ceil(heightOf(botLabelFont))
+            let botH = ceil(Self.heightOf(_valueFont))
             let botY = floor((half - botH) / 2)
 
-            // For items with temp, show "12% 42°" on bottom row
             var botText = item.botRow
             if let t = item.temp { botText += " \(t)" }
             let botTplFinal = item.temp != nil ? nil : botTpl
 
-            let topResult = placeLabel(item.topRow, font: topLabelFont, color: .secondaryLabelColor, at: x,
-                                  explicitY: topY, minTemplate: topTpl, align: .right)
-            slot.topRow = topResult.field
-            let botResult = placeLabel(botText, font: botLabelFont, color: item.color, at: x,
-                                  explicitY: botY, minTemplate: botTplFinal, align: .right)
-            slot.botRow = botResult.field
-            x += max(topResult.width, botResult.width)
-            if i < items.count - 1 { x += placeSep(at: x) } else { x += 6 }
-            itemViewSlots.append(slot)
+            let topW = drawText(item.topRow, font: _labelFont, color: .secondaryLabelColor, at: x,
+                                explicitY: topY, minTemplate: topTpl, align: .right)
+            let botW = drawText(botText, font: _valueFont, color: item.color, at: x,
+                                explicitY: botY, minTemplate: botTplFinal, align: .right)
+            x += max(topW, botW)
+            if i < items.count - 1 { x += drawSep(at: x) } else { x += 6 }
         }
         return x
     }
 
-    // MARK: - Placement Helpers
+    // MARK: - Width Calculation (mirrors draw but without drawing)
 
-    private static var _widthCache: [String: CGFloat] = [:]
-    private static var _heightCache: [CGFloat: CGFloat] = [:]
-
-    private static func minWidth(for template: String, font: NSFont) -> CGFloat {
-        let key = "\(template)|\(font.pointSize)"
-        if let w = _widthCache[key] { return w }
-        let tf = NSTextField(labelWithString: template)
-        tf.font = font
-        let w = ceil(tf.intrinsicContentSize.width) + 2
-        _widthCache[key] = w
-        return w
-    }
-
-    private func heightOf(_ font: NSFont) -> CGFloat {
-        let size = font.pointSize
-        if let h = Self._heightCache[size] { return h }
-        let tf = NSTextField(labelWithString: "X")
-        tf.font = font
-        let h = ceil(tf.intrinsicContentSize.height)
-        Self._heightCache[size] = h
-        return h
-    }
-
-    private struct PlacedLabel {
-        let field: NSTextField
-        let width: CGFloat
-    }
-
-    /// Place a label, vertically centered by default. Pass `explicitY` to override.
-    @discardableResult
-    private func placeLabel(_ text: String, font: NSFont, color: NSColor, at x: CGFloat,
-                            explicitY: CGFloat? = nil,
-                            minTemplate: String? = nil, align: NSTextAlignment = .left) -> PlacedLabel {
-        let tf = NSTextField(labelWithString: text)
-        tf.font = font
-        tf.textColor = color
-        tf.alignment = align
-        tf.isBezeled = false
-        tf.drawsBackground = false
-        tf.isEditable = false
-        tf.isSelectable = false
-        var w = ceil(tf.intrinsicContentSize.width) + 2
+    private func textWidth(_ text: String, font: NSFont, minTemplate: String? = nil) -> CGFloat {
+        var w = ceil((text as NSString).size(withAttributes: [.font: font]).width) + 2
         if let tpl = minTemplate {
             w = max(w, Self.minWidth(for: tpl, font: font))
         }
-        let h = ceil(tf.intrinsicContentSize.height)
-        let y = explicitY ?? floor((Self.barHeight - h) / 2)
-        tf.frame = NSRect(x: x, y: y, width: w, height: h)
-        addSubview(tf)
-        statViews.append(tf)
-        return PlacedLabel(field: tf, width: w)
+        return w
     }
 
-    private struct PlacedSparkline {
-        let view: SparklineView
-        let width: CGFloat
+    private func tempWidth(_ item: Item, font: NSFont) -> CGFloat {
+        guard item.temp != nil else { return 0 }
+        return 2 + textWidth(Self.tempTemplate, font: font)
     }
 
-    private func placeSparkline(_ values: [Double], color: NSColor, height: CGFloat, at x: CGFloat) -> PlacedSparkline {
-        let w = CGFloat(values.count) * 3 - 1
-        let y = floor((Self.barHeight - height) / 2)
-        let view = SparklineView(values: values, color: color)
-        view.frame = NSRect(x: x, y: y, width: w, height: height)
-        addSubview(view)
-        statViews.append(view)
-        return PlacedSparkline(view: view, width: w)
+    private func widthA(_ items: [Item], x startX: CGFloat) -> CGFloat {
+        var x = startX
+        for (i, item) in items.enumerated() {
+            x += textWidth(item.label, font: _labelFont) + 3
+            if let h = item.history, !h.isEmpty { x += CGFloat(h.count) * 3 - 1 + 3 }
+            x += textWidth(item.value, font: _smallFont, minTemplate: valueTemplate(for: item))
+            x += tempWidth(item, font: _smallFont)
+            x += (i < items.count - 1) ? 9 : 6
+        }
+        return x
     }
 
-    private struct PlacedDotGrid {
-        let view: DotGridView
-        let width: CGFloat
+    private func widthB(_ items: [Item], x startX: CGFloat) -> CGFloat {
+        var x = startX
+        for (i, item) in items.enumerated() {
+            x += textWidth(item.label, font: _labelFont) + 3
+            x += textWidth(item.value, font: _valueFont, minTemplate: valueTemplate(for: item))
+            x += tempWidth(item, font: _valueFont)
+            x += (i < items.count - 1) ? 9 : 6
+        }
+        return x
     }
 
-    private func placeDotGrid(_ filled: Int, color: NSColor, at x: CGFloat) -> PlacedDotGrid {
-        let size: CGFloat = 15
-        let y = floor((Self.barHeight - size) / 2)
-        let view = DotGridView(filled: filled, color: color)
-        view.frame = NSRect(x: x, y: y, width: size, height: size)
-        addSubview(view)
-        statViews.append(view)
-        return PlacedDotGrid(view: view, width: size)
+    private func widthC(_ items: [Item], x startX: CGFloat) -> CGFloat {
+        var x = startX
+        for (i, item) in items.enumerated() {
+            if item.pct >= 0 {
+                x += textWidth(item.label, font: _labelFont) + 3 + 15
+                x += tempWidth(item, font: _labelFont)
+            } else {
+                x += textWidth(item.value, font: _smallFont, minTemplate: valueTemplate(for: item))
+            }
+            x += (i < items.count - 1) ? 9 : 6
+        }
+        return x
     }
 
-    private func placeSep(at x: CGFloat) -> CGFloat {
-        let sep = NSView(frame: NSRect(x: x + 4, y: 5, width: 1, height: 12))
-        sep.wantsLayer = true
-        sep.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.08).cgColor
-        addSubview(sep)
-        statViews.append(sep)
-        return 9
+    private func widthD(_ items: [Item], x startX: CGFloat) -> CGFloat {
+        var x = startX
+        for (i, item) in items.enumerated() {
+            if let h = item.history, !h.isEmpty { x += CGFloat(h.count) * 3 - 1 + 2 }
+            x += textWidth(item.value, font: _smallFont, minTemplate: valueTemplate(for: item))
+            x += tempWidth(item, font: _smallFont)
+            x += (i < items.count - 1) ? 9 : 6
+        }
+        return x
+    }
+
+    private func widthE(_ items: [Item], x startX: CGFloat) -> CGFloat {
+        var x = startX
+        for (i, item) in items.enumerated() {
+            if let h = item.history, !h.isEmpty { x += CGFloat(h.count) * 3 - 1 + 3 }
+            let topTpl = rowTemplate(for: item, top: true)
+            let botTpl = rowTemplate(for: item, top: false)
+            var botText = item.botRow
+            if let t = item.temp { botText += " \(t)" }
+            let botTplFinal = item.temp != nil ? nil : botTpl
+            let topW = textWidth(item.topRow, font: _labelFont, minTemplate: topTpl)
+            let botW = textWidth(botText, font: _valueFont, minTemplate: botTplFinal)
+            x += max(topW, botW)
+            x += (i < items.count - 1) ? 9 : 6
+        }
+        return x
     }
 
     // MARK: - Heat Colors
@@ -567,74 +537,5 @@ final class CombinedMenuBarView: NSView {
         let img = NSImage(systemSymbolName: "number", accessibilityDescription: "Grid")!
         img.isTemplate = true
         return img
-    }
-}
-
-// MARK: - Sparkline View
-
-private class SparklineView: NSView {
-    var values: [Double]
-    var barColor: NSColor
-
-    init(values: [Double], color: NSColor) {
-        self.values = values
-        self.barColor = color
-        super.init(frame: .zero)
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    func updateData(_ newValues: [Double], color: NSColor) {
-        values = newValues
-        barColor = color
-        needsDisplay = true
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        barColor.withAlphaComponent(0.6).setFill()
-        for (i, val) in values.enumerated() {
-            let h = max(1, CGFloat(val) * bounds.height)
-            let x = CGFloat(i) * 3
-            let rect = NSRect(x: x, y: 0, width: 2, height: h)
-            NSBezierPath(roundedRect: rect, xRadius: 0.5, yRadius: 0.5).fill()
-        }
-    }
-}
-
-// MARK: - Dot Grid View
-
-private class DotGridView: NSView {
-    var filled: Int
-    var dotColor: NSColor
-
-    init(filled: Int, color: NSColor) {
-        self.filled = min(16, max(0, filled))
-        self.dotColor = color
-        super.init(frame: .zero)
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    func updateData(_ newFilled: Int, color: NSColor) {
-        filled = min(16, max(0, newFilled))
-        dotColor = color
-        needsDisplay = true
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        for row in 0..<4 {
-            for col in 0..<4 {
-                let idx = row * 4 + col
-                let x = CGFloat(col) * 4
-                let y = bounds.height - CGFloat(row + 1) * 4
-                let rect = NSRect(x: x, y: y, width: 3, height: 3)
-                if idx < filled {
-                    dotColor.withAlphaComponent(0.8).setFill()
-                } else {
-                    NSColor.labelColor.withAlphaComponent(0.12).setFill()
-                }
-                NSBezierPath(ovalIn: rect).fill()
-            }
-        }
     }
 }

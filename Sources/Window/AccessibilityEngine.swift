@@ -35,7 +35,7 @@ enum AccessibilityEngine {
             guard let pid = info[kCGWindowOwnerPID as String] as? pid_t,
                   pid != ownPID,
                   let layer = info[kCGWindowLayer as String] as? Int,
-                  layer == 0 else { continue }
+                  layer >= 0, layer < 20 else { continue }
             if let app = NSRunningApplication(processIdentifier: pid),
                app.activationPolicy == .accessory {
                 pids.insert(pid)
@@ -68,7 +68,7 @@ enum AccessibilityEngine {
                 var subroleValue: CFTypeRef?
                 AXUIElementCopyAttributeValue(window, kAXSubroleAttribute as CFString, &subroleValue)
                 let subrole = subroleValue as? String ?? ""
-                guard subrole == "AXStandardWindow" || subrole == "AXFloatingWindow" else { continue }
+                guard subrole == "AXStandardWindow" || subrole == "AXFloatingWindow" || subrole == "AXSystemDialog" else { continue }
 
                 var minimizedValue: CFTypeRef?
                 AXUIElementCopyAttributeValue(window, kAXMinimizedAttribute as CFString, &minimizedValue)

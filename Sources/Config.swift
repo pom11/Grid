@@ -2,8 +2,32 @@ import Foundation
 
 struct AppConfig: Codable, Equatable {
     var grid: GridConfig = .default
+    var displayGrids: [DisplayGridConfig] = []
     var monitor = MonitorSettings()
     var hotkeys = HotkeySettings()
+
+    struct DisplayGridConfig: Codable, Equatable {
+        var displayIndex: Int
+        var preset: GridPreset = .standard
+        var vertical: Bool = false
+
+        var gridConfig: GridConfig {
+            var config = GridConfig(preset: preset, vertical: vertical)
+            config.applyPreset()
+            return config
+        }
+    }
+
+    func gridConfig(for displayIndex: Int) -> GridConfig {
+        var config: GridConfig
+        if let dg = displayGrids.first(where: { $0.displayIndex == displayIndex }) {
+            config = dg.gridConfig
+        } else {
+            config = grid
+        }
+        config.margin = grid.margin  // margin is global
+        return config
+    }
 
     struct MonitorSettings: Codable, Equatable {
         var showStats: Bool = true
@@ -63,6 +87,7 @@ struct AppConfig: Codable, Equatable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         grid = try c.decodeIfPresent(GridConfig.self, forKey: .grid) ?? .default
+        displayGrids = try c.decodeIfPresent([DisplayGridConfig].self, forKey: .displayGrids) ?? []
         monitor = try c.decodeIfPresent(MonitorSettings.self, forKey: .monitor) ?? MonitorSettings()
         hotkeys = try c.decodeIfPresent(HotkeySettings.self, forKey: .hotkeys) ?? HotkeySettings()
     }

@@ -93,6 +93,27 @@ final class ZoneStore: ObservableObject {
         )
     }
 
+    func rescaleZones(from oldConfig: GridConfig, to newConfig: GridConfig) {
+        guard oldConfig.columns != newConfig.columns || oldConfig.rows != newConfig.rows else { return }
+        let scaleX = Double(newConfig.columns) / Double(oldConfig.columns)
+        let scaleY = Double(newConfig.rows) / Double(oldConfig.rows)
+        for i in zones.indices {
+            let old = zones[i].gridSelection
+            var r = GridRect(
+                x: Int((Double(old.x) * scaleX).rounded()),
+                y: Int((Double(old.y) * scaleY).rounded()),
+                width: max(1, Int((Double(old.width) * scaleX).rounded())),
+                height: max(1, Int((Double(old.height) * scaleY).rounded()))
+            )
+            // Clamp to grid bounds
+            r.x = min(r.x, newConfig.columns - r.width)
+            r.y = min(r.y, newConfig.rows - r.height)
+            zones[i].gridSelection = r
+        }
+        save()
+        log.info("Rescaled \(self.zones.count) zones from \(oldConfig.columns)×\(oldConfig.rows) to \(newConfig.columns)×\(newConfig.rows)")
+    }
+
     func save() {
         do {
             let dir = fileURL.deletingLastPathComponent()

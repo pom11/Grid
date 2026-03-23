@@ -21,7 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let zoneStore = ZoneStore.shared
     private var settingsWindow: NSWindow?
     private var menuBarView: CombinedMenuBarView?
-    private var cachedGridConfig: GridConfig?
+    private var cachedAppConfig: AppConfig?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         log.info("Grid launching")
@@ -154,20 +154,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let capturedZone = zone
             hotKeyManager.register(id: Slot.zoneSlotId(for: i), combo: combo) { [weak self] in
                 guard let self else { return }
-                WindowSnapper.snap(to: capturedZone, config: self.gridConfig)
+                WindowSnapper.snap(to: capturedZone, appConfig: self.appConfig)
             }
         }
     }
 
-    var gridConfig: GridConfig {
-        if let cached = cachedGridConfig { return cached }
-        let config = AppConfig.load().grid
-        cachedGridConfig = config
+    var appConfig: AppConfig {
+        if let cached = cachedAppConfig { return cached }
+        let config = AppConfig.load()
+        cachedAppConfig = config
         return config
     }
 
-    func invalidateGridConfig() {
-        cachedGridConfig = nil
+    func invalidateAppConfig() {
+        cachedAppConfig = nil
     }
 
     // MARK: - Settings Window
@@ -185,7 +185,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 engine: statsEngine,
                 store: zoneStore,
                 onZonesChanged: { [weak self] in
-                    self?.invalidateGridConfig()
+                    self?.invalidateAppConfig()
                     self?.registerZoneHotKeys()
                 },
                 onHotkeysChanged: { [weak self] in self?.setupHotKeys() }

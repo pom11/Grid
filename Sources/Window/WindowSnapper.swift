@@ -4,7 +4,7 @@ import os.log
 private let log = Logger(subsystem: "ro.pom.grid", category: "snapper")
 
 enum WindowSnapper {
-    static func snap(to zone: Zone, config: GridConfig) {
+    static func snap(to zone: Zone, appConfig: AppConfig) {
         guard AccessibilityEngine.isTrusted else { return }
         guard let window = AccessibilityEngine.getFocusedWindow() else {
             log.debug("No focused window to snap")
@@ -24,6 +24,12 @@ enum WindowSnapper {
             targetScreen = window.screen
         }
 
+        let config: GridConfig
+        if let zoneDisplay = zone.displayIndex {
+            config = appConfig.gridConfig(for: zoneDisplay)
+        } else {
+            config = appConfig.grid
+        }
         let effectiveConfig = ScreenHelper.isPortrait(targetScreen) ? config.portrait : config
 
         let screenRect = zone.gridSelection.toScreenRect(

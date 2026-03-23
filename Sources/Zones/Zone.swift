@@ -61,17 +61,55 @@ struct GridRect: Codable, Equatable {
     }
 }
 
+enum GridPreset: String, Codable, CaseIterable {
+    case standard
+    case wide
+    case ultrawide
+    case superultrawide
+
+    var label: String {
+        switch self {
+        case .standard: "Standard (16:9)"
+        case .wide: "Wide (21:9)"
+        case .ultrawide: "Ultrawide (32:9)"
+        case .superultrawide: "Super Ultrawide (32:10)"
+        }
+    }
+
+    var columns: Int {
+        switch self {
+        case .standard: 32
+        case .wide: 42
+        case .ultrawide: 48
+        case .superultrawide: 56
+        }
+    }
+
+    var rows: Int { 18 }
+
+    /// Match a preset from columns/rows, or nil if custom
+    static func matching(columns: Int, rows: Int) -> GridPreset? {
+        allCases.first { ($0.columns == columns && $0.rows == rows) ||
+                         ($0.columns == rows && $0.rows == columns) }
+    }
+}
+
 struct GridConfig: Codable, Equatable, Hashable {
     var columns: Int = 32
     var rows: Int = 18
     var margin: CGFloat = 6
+    var preset: GridPreset = .standard
+    var vertical: Bool = false
 
     static let `default` = GridConfig()
 
-    init(columns: Int = 32, rows: Int = 18, margin: CGFloat = 6) {
+    init(columns: Int = 32, rows: Int = 18, margin: CGFloat = 6,
+         preset: GridPreset = .standard, vertical: Bool = false) {
         self.columns = columns
         self.rows = rows
         self.margin = margin
+        self.preset = preset
+        self.vertical = vertical
     }
 
     init(from decoder: Decoder) throws {
@@ -79,10 +117,26 @@ struct GridConfig: Codable, Equatable, Hashable {
         columns = try c.decodeIfPresent(Int.self, forKey: .columns) ?? 32
         rows = try c.decodeIfPresent(Int.self, forKey: .rows) ?? 18
         margin = try c.decodeIfPresent(CGFloat.self, forKey: .margin) ?? 6
+        preset = try c.decodeIfPresent(GridPreset.self, forKey: .preset) ?? {
+            // Infer preset from existing columns/rows for backward compat
+            GridPreset.matching(columns: columns, rows: rows) ?? .standard
+        }()
+        vertical = try c.decodeIfPresent(Bool.self, forKey: .vertical) ?? false
+    }
+
+    /// Apply preset dimensions, respecting vertical toggle
+    mutating func applyPreset() {
+        if vertical {
+            columns = preset.rows
+            rows = preset.columns
+        } else {
+            columns = preset.columns
+            rows = preset.rows
+        }
     }
 
     /// Swap columns/rows for portrait displays
     var portrait: GridConfig {
-        GridConfig(columns: rows, rows: columns, margin: margin)
+        GridConfig(columns: rows, rows: columns, margin: margin, preset: preset, vertical: vertical)
     }
 }

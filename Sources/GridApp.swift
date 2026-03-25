@@ -28,7 +28,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         log.info("Grid launching")
-        closeStrayWindows()
+        for window in NSApp.windows where window !== settingsWindow {
+            window.orderOut(nil)
+        }
         stripMenuBar()
         Task { @MainActor in
             statsEngine = StatsEngine.shared
@@ -56,20 +58,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         showSettingsWindow()
         return true
-    }
-
-    private func closeStrayWindows() {
-        for window in NSApp.windows where window !== settingsWindow {
-            window.orderOut(nil)
-        }
-        // SwiftUI may create windows async after launch — catch them
-        for delay in [0.1, 0.5, 1.0, 2.0] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                for window in NSApp.windows where window !== self?.settingsWindow {
-                    window.orderOut(nil)
-                }
-            }
-        }
     }
 
     // MARK: - Menu Bar

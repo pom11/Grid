@@ -22,8 +22,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuBarView: CombinedMenuBarView?
     private var cachedAppConfig: AppConfig?
 
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // Disable window restoration so macOS doesn't resurrect stale windows at login
+        UserDefaults.standard.set(false, forKey: "NSQuitAlwaysKeepsWindows")
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         log.info("Grid launching")
+        // Close any windows SwiftUI created before we take over
+        for window in NSApp.windows {
+            window.close()
+        }
         stripMenuBar()
         Task { @MainActor in
             statsEngine = StatsEngine.shared

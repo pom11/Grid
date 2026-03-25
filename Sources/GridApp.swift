@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsWindow: NSWindow?
     private var menuBarView: CombinedMenuBarView?
     private var cachedAppConfig: AppConfig?
+    private var didFinishLaunching = false
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         UserDefaults.standard.set(false, forKey: "NSQuitAlwaysKeepsWindows")
@@ -44,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             UpdateChecker.checkOnLaunchIfNeeded()
             log.info("Grid launch complete — \(self.zoneStore.zones.count) zones loaded")
         }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { self.didFinishLaunching = true }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -56,6 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard didFinishLaunching else { return false }
         showSettingsWindow()
         return true
     }

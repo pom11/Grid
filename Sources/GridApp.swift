@@ -9,8 +9,7 @@ struct GridApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
-        Window("_hidden", id: "hidden") { EmptyView().frame(width: 0, height: 0) }
-            .defaultSize(width: 0, height: 0)
+        Settings { EmptyView() }
     }
 }
 
@@ -26,11 +25,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         log.info("Grid launching")
         stripMenuBar()
-        DispatchQueue.main.async {
-            for window in NSApp.windows where window.title == "_hidden" || window.title.isEmpty {
-                window.close()
-            }
-        }
         Task { @MainActor in
             statsEngine = StatsEngine.shared
             setupStatusItem()

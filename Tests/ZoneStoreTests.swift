@@ -27,12 +27,14 @@ import Foundation
     try FileManager.default.removeItem(at: tmpDir)
 }
 
-@Test func emptyFileLoadsEmpty() {
+@Test func missingFileLoadsDefaults() {
     let nonexistent = FileManager.default.temporaryDirectory
-        .appendingPathComponent("nonexistent/zones.json")
+        .appendingPathComponent("nonexistent-\(UUID().uuidString)/zones.json")
     let store = ZoneStore(fileURL: nonexistent)
     store.load()
-    #expect(store.zones.isEmpty)
+    // A missing zones file seeds the built-in default zone set (not empty)
+    #expect(store.zones.count == 15)
+    #expect(store.zones.first?.name == "Maximize")
 }
 
 @Test func addAndRemoveZone() throws {

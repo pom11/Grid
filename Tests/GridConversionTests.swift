@@ -1,62 +1,54 @@
 import Testing
+import AppKit
 import Foundation
 import CoreGraphics
 @testable import Grid
 
+/// toScreenRect converts into AX (top-left origin) coordinates, translating
+/// y using the real main display height. Compute the expected translation the
+/// same way the source does so these assertions are host-independent.
+private func axVisibleY(for screen: CGRect) -> CGFloat {
+    let mainScreenHeight = NSScreen.screens.first?.frame.height ?? screen.height
+    return mainScreenHeight - screen.origin.y - screen.height
+}
+
 @Test func fullScreenZone() {
-    let config = GridConfig.basic // 12x8
+    let config = GridConfig() // 32x18
     let screen = CGRect(x: 0, y: 0, width: 1200, height: 800)
-    let zone = GridRect(x: 0, y: 0, width: 12, height: 8)
+    let zone = GridRect(x: 0, y: 0, width: 32, height: 18)
     let rect = zone.toScreenRect(in: screen, config: config)
 
-    // Full screen with 3pt inset on each side (margin/2 = 3)
-    #expect(rect.origin.x == 3)
-    #expect(rect.origin.y == 3)
-    #expect(rect.width == 1194)
-    #expect(rect.height == 794)
+    // Full screen with 6pt inset on each side (margin = 6, full on screen edges)
+    #expect(rect.origin.x == 6)
+    #expect(rect.origin.y == axVisibleY(for: screen) + 6)
+    #expect(rect.width == 1188)  // 1200 - 6 - 6
+    #expect(rect.height == 788)  // 800 - 6 - 6
 }
 
 @Test func leftHalfZone() {
-    let config = GridConfig.basic
+    let config = GridConfig() // 32x18
     let screen = CGRect(x: 0, y: 0, width: 1200, height: 800)
-    let zone = GridRect(x: 0, y: 0, width: 6, height: 8)
+    let zone = GridRect(x: 0, y: 0, width: 16, height: 18)
     let rect = zone.toScreenRect(in: screen, config: config)
 
-    #expect(rect.origin.x == 3)
-    #expect(rect.width == 594)
-}
-
-@Test func fitTightToEdges() {
-    var config = GridConfig.basic
-    config.fitTightToEdges = true
-    let screen = CGRect(x: 0, y: 0, width: 1200, height: 800)
-
-    // Left half — left edge is tight, right edge has margin
-    let leftHalf = GridRect(x: 0, y: 0, width: 6, height: 8)
-    let leftRect = leftHalf.toScreenRect(in: screen, config: config)
-    #expect(leftRect.origin.x == 0) // tight to left edge
-    #expect(leftRect.width == 597) // 600 - 3 (right margin only)
-
-    // Right half — left edge has margin, right edge is tight
-    let rightHalf = GridRect(x: 6, y: 0, width: 6, height: 8)
-    let rightRect = rightHalf.toScreenRect(in: screen, config: config)
-    #expect(rightRect.origin.x == 603) // 600 + 3
-    #expect(rightRect.width == 597)
+    // Left half: left edge is a screen edge (full margin), right edge is inner (half margin)
+    #expect(rect.origin.x == 6)   // 0 + 6
+    #expect(rect.width == 591)    // 600 - 6 - 3
 }
 
 @Test func secondDisplayOffset() {
-    let config = GridConfig.basic
+    let config = GridConfig() // 32x18
     let screen = CGRect(x: 1440, y: 0, width: 1200, height: 800)
-    let zone = GridRect(x: 0, y: 0, width: 6, height: 4)
+    let zone = GridRect(x: 0, y: 0, width: 16, height: 4)
     let rect = zone.toScreenRect(in: screen, config: config)
 
-    #expect(rect.origin.x == 1443) // 1440 + margin/2
-    #expect(rect.origin.y == 3)
+    #expect(rect.origin.x == 1446) // 1440 + margin (6)
+    #expect(rect.origin.y == axVisibleY(for: screen) + 6)
 }
 
 @Test func portraitGridConfig() {
-    let landscape = GridConfig.fine // 24x12
+    let landscape = GridConfig() // 32x18
     let portrait = landscape.portrait
-    #expect(portrait.columns == 12)
-    #expect(portrait.rows == 24)
+    #expect(portrait.columns == 18)
+    #expect(portrait.rows == 32)
 }

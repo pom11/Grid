@@ -9,20 +9,20 @@ import Foundation
 }
 
 @Test func formatMemoryGB() {
-    #expect(StatsFormatter.memoryGB(7_340_032 * 1024) == "7.34 GB")
-    #expect(StatsFormatter.memoryGB(8_660_992 * 1024) == "8.66 GB")
+    #expect(StatsFormatter.memoryGB(7_340_032 * 1024) == "7.34")
+    #expect(StatsFormatter.memoryGB(8_660_992 * 1024) == "8.66")
 }
 
 @Test func formatDiskGB() {
-    #expect(StatsFormatter.diskGB(250_000_000_000) == "250.0 GB")
-    #expect(StatsFormatter.diskGB(244_500_000_000) == "244.5 GB")
+    #expect(StatsFormatter.diskGB(250_000_000_000) == "250.0")
+    #expect(StatsFormatter.diskGB(244_500_000_000) == "244.5")
 }
 
 @Test func formatNetworkSpeed() {
-    #expect(StatsFormatter.networkSpeed(0) == "0 K/s")
-    #expect(StatsFormatter.networkSpeed(1024) == "1.0 K/s")
-    #expect(StatsFormatter.networkSpeed(1_500_000) == "1.5 M/s")
-    #expect(StatsFormatter.networkSpeed(2_500_000_000) == "2.5 G/s")
+    #expect(StatsFormatter.networkSpeed(0) == "0")
+    #expect(StatsFormatter.networkSpeed(1024) == "1.0K")
+    #expect(StatsFormatter.networkSpeed(1_500_000) == "1.5M")
+    #expect(StatsFormatter.networkSpeed(2_500_000_000) == "2.5G")
 }
 
 @Test func formatTemperature() {

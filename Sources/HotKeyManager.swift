@@ -165,10 +165,24 @@ final class HotKeyManager {
     }
 
     private func handleHotKey(id: UInt32) {
-        log.debug("Hotkey triggered: \(id)")
+        // Diagnostic (investigation step 1): confirm whether the local Carbon
+        // handler actually receives the hotkey while a remote session is active.
+        // If this never logs during Screen Sharing / VNC, the hotkey is being
+        // captured by the remote input path, not by Grid.
+        if let combo = registeredCombo(for: id) {
+            log.debug("Hotkey triggered: id=\(id) combo=\(combo.displayString)")
+        } else {
+            log.debug("Hotkey triggered: id=\(id) (no recorded combo)")
+        }
         handlers[id]?()
     }
 
+    /// Look up the currently-registered combo for a hotkey id, for diagnostics.
+    private func registeredCombo(for id: UInt32) -> KeyCombo? {
+        registeredCombos[id]
+    }
+
+    var registeredCombos: [UInt32: KeyCombo] = [:]
     // MARK: Registration
 
     func register(id: UInt32, combo: KeyCombo, handler: @escaping () -> Void) {
@@ -189,7 +203,8 @@ final class HotKeyManager {
         if status == noErr, let ref = hotKeyRef {
             hotKeyRefs[id] = ref
             handlers[id] = handler
-            log.debug("Registered hotkey \(id): \(combo.displayString)")
+            registeredCombos[id] = combo
+            log.debug("Registered hotkey \(id) (\(combo.displayString))")
         } else {
             log.error("Failed to register hotkey \(id): status \(status)")
         }
@@ -205,6 +220,7 @@ final class HotKeyManager {
             log.debug("Unregistered Carbon hotkey \(id)")
         }
         handlers.removeValue(forKey: id)
+        registeredCombos.removeValue(forKey: id)
     }
 
     func unregister(slot: Slot) {

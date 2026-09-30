@@ -41,7 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 statsEngine.start()
             }
             checkAccessibility()
-            setupHotKeys()
+            setupHotKeys(logRemoteSession: true)
             UpdateChecker.checkOnLaunchIfNeeded()
             log.info("Grid launch complete — \(self.zoneStore.zones.count) zones loaded")
         }
@@ -123,8 +123,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Hotkeys
 
-    private func setupHotKeys() {
+    private func setupHotKeys(logRemoteSession: Bool = false) {
         log.debug("Setting up hotkeys")
+        if logRemoteSession, ScreenSharingDetector.detectActiveRemoteSession() {
+            log.warning("Remote Session Detector: a Screen Sharing / VNC session is active. Global hotkeys may not fire locally until the remote session disconnects (see Settings > Hotkeys).")
+        }
         let baseSlots: [Slot] = [.focusNext, .focusPrevious, .moveNextDisplay, .movePrevDisplay]
         for slot in baseSlots {
             if let combo = hotKeyManager.savedCombo(for: slot) {

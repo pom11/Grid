@@ -9,6 +9,18 @@ struct HotkeysTab: View {
 
     var body: some View {
         Form {
+            if remoteSessionActive {
+                Label {
+                    Text("Grid's global hotkeys are temporarily unavailable — macOS routes global hotkeys to the remote computer while Screen Sharing / VNC controls this Mac. They resume automatically once the remote session disconnects.")
+                        .font(.callout)
+                } icon: {
+                    Image(systemName: "warningtriangle")
+                        .foregroundStyle(.orange)
+                }
+                .padding(8)
+                .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+            }
+
             Section("Focus Cycling") {
                 HotKeyRecorderView(label: "Focus next window", combo: $focusNext)
                     .onChange(of: focusNext) { _, val in save(.focusNext, val) }
@@ -26,6 +38,20 @@ struct HotkeysTab: View {
         .formStyle(.grouped)
         .padding()
         .onAppear { loadAll() }
+        .task { refreshRemoteSessionStatus() }
+        .onReceive(Timer.publish(every: 5, on: .main, in: .common).autoconnect()) { _ in
+            refreshRemoteSessionStatus()
+        }
+    }
+
+    @State private var remoteSessionActive = false
+
+    private func refreshRemoteSessionStatus() {
+        // netstat is a subprocess; don't block the main thread on it.
+        Task.detached(priority: .utility) {
+            let active = ScreenSharingDetector.detectActiveRemoteSession()
+            await MainActor.run { self.remoteSessionActive = active }
+        }
     }
 
     private func loadAll() {

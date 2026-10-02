@@ -5,11 +5,15 @@ import CoreGraphics
 @testable import Grid
 
 /// toScreenRect converts into AX (top-left origin) coordinates, translating
-/// y using the real main display height. Compute the expected translation the
-/// same way the source does so these assertions are host-independent.
+/// y using the target screen's own full frame height. Compute the expected
+/// translation the same way the source does (look up the NSScreen whose
+/// visibleFrame matches; fall back to the passed-in visibleFrame height) so
+/// these assertions are host-independent — the synthetic rects never match a
+/// real display, so the fallback path is always exercised.
 private func axVisibleY(for screen: CGRect) -> CGFloat {
-    let mainScreenHeight = NSScreen.screens.first?.frame.height ?? screen.height
-    return mainScreenHeight - screen.origin.y - screen.height
+    let fullFrameHeight = NSScreen.screens.first { $0.visibleFrame == screen }?.frame.height
+        ?? screen.height
+    return fullFrameHeight - screen.origin.y - screen.height
 }
 
 @Test func fullScreenZone() {
@@ -51,4 +55,31 @@ private func axVisibleY(for screen: CGRect) -> CGFloat {
     let portrait = landscape.portrait
     #expect(portrait.columns == 18)
     #expect(portrait.rows == 32)
+}
+
+// Fix [3]: on a portrait monitor, a vertical-ready config must NOT double-swap.
+// The per-display config with vertical=true already swapped via applyPreset
+// (18 columns x 32 rows for the standard preset); re-applying the portrait
+// transform would yield 32x18 and misplace windows. effectiveConfig guards it.
+@Test func portraitScreenWithVerticalConfigKeepsVerticalDims() {
+    // vertical=true standard preset → applyPreset gives 18x32
+    var config = GridConfig(preset: .standard, vertical: true)
+    config.applyPreset()
+    #expect(config.columns == 18)
+    #expect(config.rows == 32)
+
+    // On a portrait screen the config must be used as-is (no second swap).
+    let effective = WindowSnapper.effectiveConfig(isPortrait: true, config: config)
+    #expect(effective.columns == 18)
+    #expect(effective.rows == 32)
+}
+
+// Sanity: the same landscape config on a portrait screen still gets the
+// portrait transform applied exactly once (18x32 for the standard preset),
+// so the fix only suppresses the DOUBLE swap, not the intended one.
+@Test func portraitScreenWithoutVerticalStillAppliesPortrait() {
+    let config = GridConfig() // 32x18 landscape, vertical=false
+    let effective = WindowSnapper.effectiveConfig(isPortrait: true, config: config)
+    #expect(effective.columns == 18)
+    #expect(effective.rows == 32)
 }

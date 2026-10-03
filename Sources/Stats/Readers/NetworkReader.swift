@@ -27,8 +27,20 @@ class NetworkReader: ObservableObject {
         while true {
             let name = String(cString: current.pointee.ifa_name)
 
-            // Skip loopback interface
-            if name != "lo0", let addr = current.pointee.ifa_addr,
+            // Skip loopback plus VPN/tunnel/Apple-wireless interfaces. Physical
+            // Ethernet/Wi-Fi (en*, bridge*, ...) all count; utun*, awdl*, llw*
+            // (and lo0) would otherwise inflate the reported speeds with
+            // looped tunnel traffic.
+            let isVirtual = name == "lo0"
+                || name.hasPrefix("utun")   // VPN tunnels (WireGuard, OpenVPN, ...)
+                || name.hasPrefix("awdl")   // Apple Wireless Direct Link
+                || name.hasPrefix("llw")    // Low-Latency WLAN (infrastructure)
+                || name.hasPrefix("ipsec")
+                || name.hasPrefix("ppp")
+                || name.hasPrefix("gif")
+                || name.hasPrefix("stf")
+
+            if !isVirtual, let addr = current.pointee.ifa_addr,
                addr.pointee.sa_family == UInt8(AF_LINK) {
 
                 if let networkData = current.pointee.ifa_data?.assumingMemoryBound(to: if_data.self) {

@@ -30,7 +30,7 @@ enum WindowSnapper {
         } else {
             config = appConfig.grid
         }
-        let effectiveConfig = ScreenHelper.isPortrait(targetScreen) ? config.portrait : config
+        let effectiveConfig = Self.effectiveConfig(isPortrait: ScreenHelper.isPortrait(targetScreen), config: config)
 
         let screenRect = zone.gridSelection.toScreenRect(
             in: targetScreen.visibleFrame,
@@ -39,6 +39,16 @@ enum WindowSnapper {
 
         NSLog("WindowSnapper: snapping '%@' to zone '%@' rect=%@ margin=%.1f", window.appName, zone.name, screenRect.debugDescription, effectiveConfig.margin)
         AccessibilityEngine.moveWindow(window, to: screenRect)
+    }
+
+    /// Resolve the config actually used to snap on a given screen.
+    ///
+    /// A per-display config with `vertical` already swapped columns/rows via
+    /// `applyPreset`, so the portrait transform must NOT apply a second swap on
+    /// a portrait monitor — that would yield e.g. 32x18 instead of 18x32 and
+    /// misplace windows. Portrait adapts the LANDSCAPE preset only.
+    static func effectiveConfig(isPortrait: Bool, config: GridConfig) -> GridConfig {
+        (isPortrait && !config.vertical) ? config.portrait : config
     }
 
     static func moveToDisplay(direction: Int) {

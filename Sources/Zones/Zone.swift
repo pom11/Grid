@@ -30,10 +30,14 @@ struct GridRect: Codable, Equatable {
     func toScreenRect(in screenFrame: CGRect, config: GridConfig) -> CGRect {
         // screenFrame is NSScreen.visibleFrame in Cocoa coords (bottom-left origin).
         // AX API uses Quartz coords (top-left of main display, y increases downward).
-        let mainScreenHeight = NSScreen.screens.first?.frame.height ?? screenFrame.height
+        // Use the target screen's OWN full frame height, not screens.first (which
+        // isn't guaranteed to be the primary display). Fall back to the passed-in
+        // visibleFrame height when no matching NSScreen is resolvable.
+        let fullFrameHeight = NSScreen.screens.first { $0.visibleFrame == screenFrame }?.frame.height
+            ?? screenFrame.height
 
         // Convert visibleFrame to AX coords
-        let axVisibleY = mainScreenHeight - screenFrame.origin.y - screenFrame.height
+        let axVisibleY = fullFrameHeight - screenFrame.origin.y - screenFrame.height
 
         let cellW = screenFrame.width / CGFloat(config.columns)
         let cellH = screenFrame.height / CGFloat(config.rows)

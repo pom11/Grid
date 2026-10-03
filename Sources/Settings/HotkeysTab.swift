@@ -22,16 +22,16 @@ struct HotkeysTab: View {
             }
 
             Section("Focus Cycling") {
-                HotKeyRecorderView(label: "Focus next window", combo: $focusNext)
+                HotKeyRecorderView(label: "Focus next window", combo: $focusNext, slot: .focusNext)
                     .onChange(of: focusNext) { _, val in save(.focusNext, val) }
-                HotKeyRecorderView(label: "Focus previous window", combo: $focusPrev)
+                HotKeyRecorderView(label: "Focus previous window", combo: $focusPrev, slot: .focusPrevious)
                     .onChange(of: focusPrev) { _, val in save(.focusPrevious, val) }
             }
 
             Section("Move Between Displays") {
-                HotKeyRecorderView(label: "Move to next display", combo: $moveNext)
+                HotKeyRecorderView(label: "Move to next display", combo: $moveNext, slot: .moveNextDisplay)
                     .onChange(of: moveNext) { _, val in save(.moveNextDisplay, val) }
-                HotKeyRecorderView(label: "Move to previous display", combo: $movePrev)
+                HotKeyRecorderView(label: "Move to previous display", combo: $movePrev, slot: .movePrevDisplay)
                     .onChange(of: movePrev) { _, val in save(.movePrevDisplay, val) }
             }
         }

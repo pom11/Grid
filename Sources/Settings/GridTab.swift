@@ -170,6 +170,14 @@ struct ZoneRow: View {
     let onSave: () -> Void
     let onDelete: () -> Void
 
+    /// The slot id backing this zone's hotkey, derived from its position in the
+    /// store (matches `Slot.zoneSlotId`), so collision checks can exclude the
+    /// zone's own current assignment.
+    private var zoneSlot: Slot? {
+        guard let idx = ZoneStore.shared.zones.firstIndex(where: { $0.id == zone.id }) else { return nil }
+        return .zone(idx)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // Collapsed row — always visible
@@ -259,7 +267,7 @@ struct ZoneRow: View {
                         Text("Shortcut")
                             .foregroundStyle(.secondary)
                             .frame(width: 80, alignment: .leading)
-                        HotKeyRecorderView(label: "", combo: $zone.hotkey)
+                        HotKeyRecorderView(label: "", combo: $zone.hotkey, slot: zoneSlot)
                     }
 
                     // Actions

@@ -39,11 +39,14 @@ class RAMReader: ObservableObject {
         let pageSize = UInt64(vm_kernel_page_size)
         let freePages = UInt64(stats.free_count)
         let activePages = UInt64(stats.active_count)
-        let inactivePages = UInt64(stats.inactive_count)
         let wiredPages = UInt64(stats.wire_count)
         let compressedPages = UInt64(stats.compressor_page_count)
+        let purgeablePages = UInt64(stats.purgeable_count)
 
         free = freePages * pageSize
-        used = (activePages + wiredPages + compressedPages) * pageSize
+        // Match Activity Monitor: treat purgeable memory as used. It still
+        // belongs to a process and can only be reclaimed on demand, so it
+        // should not be counted as free.
+        used = (activePages + wiredPages + compressedPages + purgeablePages) * pageSize
     }
 }

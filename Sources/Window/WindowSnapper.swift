@@ -2,23 +2,24 @@
 //  WindowSnapper.swift
 //  Grid
 //
-//  Zone snapping + cross-display moves. Every early exit is logged with NSLog (not
-//  os.log .debug, which is not persisted in release builds) so
-//  `log show --predicate 'process == "Grid"'` is a real diagnostic channel in the field.
+//  Zone snapping + cross-display moves. Every early exit goes through
+//  GridDiagnostics.report so `log show --predicate 'process == "Grid"'` is a real
+//  diagnostic channel in the field (see GridDiagnostics for why plain NSLog/os-log
+//  .debug are invisible to that query on macOS 27).
 //
 
 import AppKit
 
 enum WindowSnapper {
-    /// Shared front door for both hotkey actions: resolve the target window once, and NSLog
-    /// why when there is none. A snap press that does nothing is otherwise invisible.
+    /// Shared front door for both hotkey actions: resolve the target window once, and
+    /// report why when there is none. A snap press that does nothing is otherwise invisible.
     private static func targetWindow(action: String) -> WindowModel? {
         guard AccessibilityEngine.isTrusted else {
-            NSLog("Grid \(action): accessibility not trusted — hotkey ignored")
+            GridDiagnostics.report("Grid \(action): accessibility not trusted — hotkey ignored")
             return nil
         }
         guard let window = AccessibilityEngine.getFocusedWindow() else {
-            NSLog("Grid \(action): no usable window — hotkey ignored")
+            GridDiagnostics.report("Grid \(action): no usable window — hotkey ignored")
             return nil
         }
         return window
@@ -33,8 +34,7 @@ enum WindowSnapper {
             if displayIndex < screens.count {
                 targetScreen = screens[displayIndex]
             } else {
-                NSLog("Grid snap: display index %d not available (have %d) — falling back to main",
-                      displayIndex, screens.count)
+                GridDiagnostics.report("Grid snap: display index \(displayIndex) not available (have \(screens.count)) — falling back to main")
                 targetScreen = NSScreen.main ?? window.screen
             }
         } else {
@@ -54,7 +54,9 @@ enum WindowSnapper {
             config: effectiveConfig
         )
 
-        NSLog("WindowSnapper: snapping '%@' to zone '%@' rect=%@ margin=%.1f", window.appName, zone.name, screenRect.debugDescription, effectiveConfig.margin)
+        // Prefix kept as "WindowSnapper: snapping" — the string the v1.1.4/1.1.6 field
+        // investigation grepped for, so past and future log captures stay comparable.
+        GridDiagnostics.note("WindowSnapper: snapping '\(window.appName)' to zone '\(zone.name)' rect=\(screenRect.debugDescription) margin=\(String(format: "%.1f", effectiveConfig.margin))")
         AccessibilityEngine.moveWindow(window, to: screenRect)
     }
 
@@ -72,8 +74,7 @@ enum WindowSnapper {
         let action = "moveToDisplay \(direction > 0 ? "next" : "previous")"
         guard let window = targetWindow(action: action) else { return }
         guard let targetScreen = ScreenHelper.adjacentScreen(from: window.screen, direction: direction) else {
-            NSLog("Grid %@: no adjacent display found (window on '%@') — hotkey ignored",
-                  action, window.screen.localizedName)
+            GridDiagnostics.report("Grid \(action): no adjacent display found (window on '\(window.screen.localizedName)') — hotkey ignored")
             return
         }
 
@@ -83,9 +84,7 @@ enum WindowSnapper {
             targetScreen: targetScreen
         )
 
-        NSLog("Grid %@: '%@' %@ -> target screen '%@' rect=%@",
-              action, window.appName, NSStringFromRect(window.frame),
-              targetScreen.localizedName, NSStringFromRect(newRect))
+        GridDiagnostics.note("Grid \(action): '\(window.appName)' \(NSStringFromRect(window.frame)) -> target screen '\(targetScreen.localizedName)' rect=\(NSStringFromRect(newRect))")
         AccessibilityEngine.moveWindow(window, to: newRect)
     }
 }

@@ -204,9 +204,27 @@ final class HotKeyManager {
             hotKeyRefs[id] = ref
             handlers[id] = handler
             registeredCombos[id] = combo
+            // NSLog, not os.log: RegisterEventHotKey fails SILENTLY when another app
+            // already holds the same combo (cross-app Carbon collision — e.g. Radio
+            // registers its own slot hotkeys). Without the OSStatus per slot at startup,
+            // "a zone hotkey never fires" is indistinguishable from "resolution returned
+            // no window". See FINDINGS_hotkeys_screensharing.md.
+            GridDiagnostics.note("Grid hotkey: registered id=\(id) (\(slotLabel(for: id)) '\(combo.displayString)') status=\(status)")
             log.debug("Registered hotkey \(id) (\(combo.displayString))")
         } else {
+            GridDiagnostics.report("Grid hotkey: FAILED to register id=\(id) (\(slotLabel(for: id)) '\(combo.displayString)') status=\(status) — a combo already owned by another app is the usual cause (cross-app Carbon collision); quit the other app and relaunch Grid to test")
             log.error("Failed to register hotkey \(id): status \(status)")
+        }
+    }
+
+    /// Human-readable slot name for a hotkey id, for startup diagnostics.
+    private func slotLabel(for id: UInt32) -> String {
+        switch id {
+        case Slot.focusNext.rawValue: return "focusNext"
+        case Slot.focusPrevious.rawValue: return "focusPrevious"
+        case Slot.moveNextDisplay.rawValue: return "moveNextDisplay"
+        case Slot.movePrevDisplay.rawValue: return "movePrevDisplay"
+        default: return id >= Slot.zoneSlotId(for: 0) ? "zone[\(id - Slot.zoneSlotId(for: 0))]" : "unknown"
         }
     }
 

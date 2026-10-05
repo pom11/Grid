@@ -220,7 +220,7 @@ enum AccessibilityEngine {
     /// cannot disagree about what exists or about what is on top.
     static func resolveWindows(cgWindows: [CGWindowInfo]? = nil) -> [ResolvedWindow] {
         guard isTrusted else {
-            NSLog("Grid resolveWindows: accessibility not trusted — no windows")
+            GridDiagnostics.report("Grid resolveWindows: accessibility not trusted — no windows")
             return []
         }
 
@@ -287,12 +287,12 @@ enum AccessibilityEngine {
     /// `log show --predicate process=="Grid"` explains it in the field.
     static func getFocusedWindow() -> WindowModel? {
         guard isTrusted else {
-            NSLog("Grid getFocusedWindow: not trusted (accessibility permission missing) — giving up")
+            GridDiagnostics.report("Grid getFocusedWindow: not trusted (accessibility permission missing) — giving up")
             return nil
         }
 
         guard let frontApp = NSWorkspace.shared.frontmostApplication else {
-            NSLog("Grid getFocusedWindow: no frontmost application — giving up")
+            GridDiagnostics.report("Grid getFocusedWindow: no frontmost application — giving up")
             return nil
         }
         let frontPID = frontApp.processIdentifier
@@ -329,8 +329,7 @@ enum AccessibilityEngine {
             allWindows: allWindows,
             screenFrames: screenFrames
         ) else {
-            NSLog("Grid getFocusedWindow: no usable window (frontmost=%@ pid=%d pool=%d) — giving up",
-                  frontApp.localizedName ?? "?", frontPID, pool.count)
+            GridDiagnostics.report("Grid getFocusedWindow: no usable window (frontmost=\(frontApp.localizedName ?? "?") pid=\(frontPID), pool=\(pool.count)) — giving up")
             return nil
         }
 
@@ -342,22 +341,18 @@ enum AccessibilityEngine {
         } else if let cached = focusedElementCache[choice.candidate.id] {
             windowElement = cached
         } else {
-            NSLog("Grid getFocusedWindow: selected %@ window has no AX element — giving up", choice.strategy.rawValue)
+            GridDiagnostics.report("Grid getFocusedWindow: selected \(choice.strategy.rawValue) window has no AX element — giving up")
             return nil
         }
 
         let frame = choice.candidate.frame
         let screen = ScreenHelper.screen(for: frame) ?? NSScreen.main
         guard let screen else {
-            NSLog("Grid getFocusedWindow: no screen for frame %@ — giving up", NSStringFromRect(frame))
+            GridDiagnostics.report("Grid getFocusedWindow: no screen for frame \(NSStringFromRect(frame)) — giving up")
             return nil
         }
 
-        NSLog("Grid getFocusedWindow: %@ via %@ (frontmost=%@ pid=%d, pool=%d, title='%@', subrole=%@, frame=%@)",
-              choice.candidate.appName.isEmpty ? "pid \(choice.candidate.pid)" : choice.candidate.appName,
-              choice.strategy.rawValue,
-              frontApp.localizedName ?? "?", frontPID, pool.count,
-              choice.candidate.title, choice.candidate.subrole, NSStringFromRect(frame))
+        GridDiagnostics.note("Grid getFocusedWindow: \(choice.candidate.appName.isEmpty ? "pid \(choice.candidate.pid)" : choice.candidate.appName) via \(choice.strategy.rawValue) (frontmost=\(frontApp.localizedName ?? "?") pid=\(frontPID), pool=\(pool.count), title='\(choice.candidate.title)', subrole=\(choice.candidate.subrole), frame=\(NSStringFromRect(frame)))")
 
         return WindowModel(
             pid: choice.candidate.pid,
@@ -440,7 +435,7 @@ enum AccessibilityEngine {
 
         var position = rect.origin
         guard let posValue = AXValueCreate(.cgPoint, &position) else {
-            NSLog("Grid moveWindow: could not encode position %@ for %@ — aborting", NSStringFromRect(rect), window.appName)
+            GridDiagnostics.report("Grid moveWindow: could not encode position \(NSStringFromRect(rect)) for \(window.appName) — aborting")
             return
         }
         let posErr = AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, posValue)
@@ -474,15 +469,16 @@ enum AccessibilityEngine {
         }
 
         let readback = currentFrame(of: element)
-        NSLog("Grid moveWindow: '%@' (pid %d) %@ -> %@ | setPos err=%d, %@ | readback=%@",
-              window.title.isEmpty ? window.appName : window.title,
-              window.pid,
-              before.map { NSStringFromRect($0) } ?? "unknown",
-              NSStringFromRect(rect), posErr.rawValue, sizeNote,
-              readback.map { NSStringFromRect($0) } ?? "unavailable")
-
+        let line = "Grid moveWindow: '\(window.title.isEmpty ? window.appName : window.title)' (pid \(window.pid)) "
+            + "\(before.map { NSStringFromRect($0) } ?? "unknown") -> \(NSStringFromRect(rect)) "
+            + "| setPos err=\(posErr.rawValue), \(sizeNote) "
+            + "| readback=\(readback.map { NSStringFromRect($0) } ?? "unavailable")"
         if posErr != .success {
+            // A failed position write is exactly the "nothing happened" the user reports.
+            GridDiagnostics.report(line)
             log.error("moveWindow position set failed err=\(posErr.rawValue) app=\(window.appName)")
+        } else {
+            GridDiagnostics.note(line)
         }
     }
 

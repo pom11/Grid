@@ -26,18 +26,25 @@ struct GridRect: Codable, Equatable {
         y + height <= config.rows
     }
 
-    /// Convert grid coordinates to screen CGRect in AX coordinates (top-left origin)
+    /// Convert grid coordinates to screen CGRect in AX coordinates (top-left origin).
+    /// Convenience overload: resolves the main-display height from AppKit.
     func toScreenRect(in screenFrame: CGRect, config: GridConfig) -> CGRect {
-        // screenFrame is NSScreen.visibleFrame in Cocoa coords (bottom-left origin).
-        // AX API uses Quartz coords (top-left of main display, y increases downward).
-        // Use the target screen's OWN full frame height, not screens.first (which
-        // isn't guaranteed to be the primary display). Fall back to the passed-in
-        // visibleFrame height when no matching NSScreen is resolvable.
-        let fullFrameHeight = NSScreen.screens.first { $0.visibleFrame == screenFrame }?.frame.height
-            ?? screenFrame.height
+        let mainHeight = NSScreen.screens.first?.frame.height ?? screenFrame.height
+        return toScreenRect(in: screenFrame, config: config, mainDisplayHeight: mainHeight)
+    }
 
+    /// Pure geometry (host-independent, testable): converts Cocoa visibleFrame
+    /// (bottom-left origin, global Cocoa coords) to an AX/Quartz rect (top-left
+    /// origin of the MAIN display, y down). `mainDisplayHeight` is the FULL
+    /// frame height of the main display — AppKit's `NSScreen.screens.first` is
+    /// guaranteed to be it (Cocoa global origin (0,0) = bottom-left of main).
+    /// Using the target screen's own height instead misplaces windows on any
+    /// display whose height differs from the main one by (H_target - H_main) —
+    /// e.g. a laptop (982) with a taller external (1200) snapped windows ~218pt
+    /// too low (v1.1.5 regression, fixed in v1.1.6).
+    func toScreenRect(in screenFrame: CGRect, config: GridConfig, mainDisplayHeight: CGFloat) -> CGRect {
         // Convert visibleFrame to AX coords
-        let axVisibleY = fullFrameHeight - screenFrame.origin.y - screenFrame.height
+        let axVisibleY = mainDisplayHeight - screenFrame.origin.y - screenFrame.height
 
         let cellW = screenFrame.width / CGFloat(config.columns)
         let cellH = screenFrame.height / CGFloat(config.rows)
